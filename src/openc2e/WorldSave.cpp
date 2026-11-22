@@ -1099,7 +1099,10 @@ static Agent* buildCreature(std::shared_ptr<genomeFile> genome, const SavedCreat
 				a->moveTo(a->x, a->y + dy, true);
 		}
 	if (CreatureMind* m = c->getMind()) {
-		if (m->name() == s.mind)
+		// the llm mind (phase 1) saves exactly the homeostat's state, so a
+		// world can move between the two without losing what creatures learned
+		auto homeostatFamily = [](const std::string& n) { return n == "homeostat" || n == "llm"; };
+		if (m->name() == s.mind || (homeostatFamily(m->name()) && homeostatFamily(s.mind)))
 			m->loadState(s.mindstate);
 		else if (!s.mind.empty())
 			fmt::print("* Note: creature saved with mind '{}' loaded with '{}'; learned state not restored\n", s.mind, m->name());

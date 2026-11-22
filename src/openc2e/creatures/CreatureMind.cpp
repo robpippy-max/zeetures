@@ -19,13 +19,16 @@
 #include "CreatureMind.h"
 
 std::unique_ptr<CreatureMind> createHomeostatMind(); // HomeostatMind.cpp
+std::unique_ptr<CreatureMind> createLlmMind(); // LlmMind.cpp
 
 std::unique_ptr<CreatureMind> createCreatureMind(const std::string& name) {
 	if (name == "homeostat")
 		return createHomeostatMind();
+	if (name == "llm")
+		return createLlmMind();
 	return nullptr;
 }
 
 std::string availableCreatureMinds() {
-	return "homeostat";
+	return "homeostat, llm";
 }

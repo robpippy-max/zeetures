@@ -357,6 +357,7 @@ add_library(openc2e_core OBJECT
 	src/openc2e/creatures/CreatureAI.cpp
 	src/openc2e/creatures/CreatureMind.cpp
 	src/openc2e/creatures/HomeostatMind.cpp
+	src/openc2e/creatures/LlmMind.cpp
 	src/openc2e/dialect.cpp
 	src/openc2e/Engine.cpp
 	src/openc2e/historyManager.cpp
