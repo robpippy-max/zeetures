@@ -467,7 +467,8 @@ class LlmMind : public CreatureMind {
 		  << ",\"kind\":" << jsonString(kindName(p.genus))
 		  << ",\"female\":" << (p.female ? "true" : "false")
 		  << ",\"stage\":" << jsonString(format_as(p.stage))
-		  << ",\"asleep\":" << (p.asleep ? "true" : "false")
+		  << ",\"asleep\":" << (p.asleep || p.dozing ? "true" : "false") // dozing (event 69, Zeetures 0.28.3) is sleep too
+		  << ",\"dozing\":" << (p.dozing ? "true" : "false")
 		  << ",\"room\":" << p.room
 		  << ",\"x\":" << num(p.x) << ",\"y\":" << num(p.y)
 		  << ",\"season\":" << p.season << ",\"timeOfDay\":" << p.timeOfDay
@@ -582,6 +583,7 @@ class LlmMind : public CreatureMind {
 		bool handCame = handNear && !handWasNear;
 		handWasNear = handNear;
 		unsigned int since = p.tick >= lastAsk ? p.tick - lastAsk : thinkEvery;
+		const bool sleeping = p.asleep || p.dozing;
 		// the hand spoke to it (it heard; the line is new)
 		handText.clear();
 		std::string line;
@@ -599,14 +601,14 @@ class LlmMind : public CreatureMind {
 			why = "slapped";
 		else if (since >= 2 && p.handPat)
 			why = "patted";
-		else if (!p.asleep && since >= 5 && notable)
+		else if (!sleeping && since >= 10 && notable)
 			why = "event";
-		else if (!p.asleep && since >= 5 && !met.empty())
+		else if (!sleeping && since >= 5 && !met.empty())
 			why = "met:" + met;
-		else if (!p.asleep && since >= 5 && handCame)
+		else if (!sleeping && since >= 5 && handCame)
 			why = "hand";
-		else if (since >= (p.asleep ? sleepEvery : thinkEvery))
-			why = p.asleep ? "asleep" : "timer";
+		else if (since >= (sleeping ? sleepEvery : thinkEvery))
+			why = sleeping ? "asleep" : "timer";
 		if (!why.empty())
 			lastSeen = seen;
 		return why;
