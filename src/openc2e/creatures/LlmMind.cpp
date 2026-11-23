@@ -15,8 +15,11 @@
  *
  *  When a creature asks: on a timer (awake every $ZEETURES_MIND_THINK_EVERY
  *  mind ticks, default 20, about eight seconds; asleep every
- *  $ZEETURES_MIND_SLEEP_EVERY, default 60), and sooner when something
- *  happens (a notable stimulus, someone new in view, the hand coming near).
+ *  $ZEETURES_MIND_SLEEP_EVERY, default 150), and sooner when something
+ *  happens: the hand speaks to it, pats or slaps it, or comes near; a
+ *  notable stimulus; someone new in view. The hand's whole sentence goes to
+ *  the sidecar ("handSaid"), so a creature can understand more than the
+ *  words it knows.
  *  One question at a time per creature.
  *
  *  Connection: 127.0.0.1, port $ZEETURES_MIND_PORT (default 47474), lines
@@ -45,7 +48,10 @@
  */
 
 #include "CreatureMind.h"
+#include "CreatureSpeech.h"
 #include "Engine.h"
+#include "World.h"
+#include "historyManager.h"
 
 #include <fmt/core.h>
 
@@ -172,6 +178,31 @@ std::string actionLabel(int decision) {
 		case 27: return "walk east";
 		default: return "action " + std::to_string(decision);
 	}
+}
+
+// the name the player gave a creature (Zeetures's records), or empty
+std::string givenName(const std::string& moniker) {
+	if (moniker.empty() || !world.history || !world.history->hasMoniker(moniker))
+		return {};
+	return world.history->getMoniker(moniker).name;
+}
+
+// the hand's latest line, if said within `within` world ticks: its text and tick
+bool handLine(unsigned int within, std::string& text, unsigned int& tick) {
+	Agent* hand = (Agent*)world.hand();
+	if (!hand)
+		return false;
+	for (const SpokenLine& l : speechHistory()) {
+		if (l.speaker.lock().get() != hand)
+			continue;
+		if (world.worldtickcount >= l.tick && world.worldtickcount - l.tick < within) {
+			text = l.text;
+			tick = l.tick;
+			return true;
+		}
+		return false; // only the newest of the hand's lines
+	}
+	return false;
 }
 
 bool background(const StimulusEvent& s) {
@@ -396,7 +427,7 @@ class LlmMind : public CreatureMind {
 	bool logTried = false;
 	unsigned int every = envCount("ZEETURES_MIND_LOG_EVERY", 10);
 	unsigned int thinkEvery = envCount("ZEETURES_MIND_THINK_EVERY", 20);
-	unsigned int sleepEvery = envCount("ZEETURES_MIND_SLEEP_EVERY", 60);
+	unsigned int sleepEvery = envCount("ZEETURES_MIND_SLEEP_EVERY", 150);
 	unsigned int sinceLog = 0;
 	unsigned int heard = 0; // shouts and signs since the last line
 	// asking the sidecar
@@ -405,6 +436,8 @@ class LlmMind : public CreatureMind {
 	bool askedOnce = false;
 	std::set<std::string> lastSeen; // creatures in view when it last asked
 	bool handWasNear = false;
+	unsigned int handLineTick = 0; // the hand's line it last asked about
+	std::string handText; // set when the hand has just spoken to it
 
 	std::string id(const MindPerception& p) const {
 		return p.self.empty() ? "creature-" + std::to_string(p.creatureId) : p.self;
@@ -430,6 +463,7 @@ class LlmMind : public CreatureMind {
 		j << "{\"event\":" << jsonString(event)
 		  << ",\"tick\":" << p.tick
 		  << ",\"self\":" << jsonString(id(p))
+		  << ",\"name\":" << jsonString(givenName(p.self))
 		  << ",\"kind\":" << jsonString(kindName(p.genus))
 		  << ",\"female\":" << (p.female ? "true" : "false")
 		  << ",\"stage\":" << jsonString(format_as(p.stage))
@@ -455,7 +489,7 @@ class LlmMind : public CreatureMind {
 		for (const SeenAgent& s : p.visible) {
 			j << (first ? "" : ",") << "{\"what\":" << jsonString(thingName(s.category)) << ",\"cat\":" << s.category << ",\"dist\":" << num(s.distance);
 			if (!s.who.empty())
-				j << ",\"who\":" << jsonString(s.who) << ",\"kind\":" << jsonString(kindName(s.genus))
+				j << ",\"who\":" << jsonString(s.who) << ",\"name\":" << jsonString(givenName(s.who)) << ",\"kind\":" << jsonString(kindName(s.genus))
 				  << ",\"female\":" << (s.female ? "true" : "false") << ",\"stage\":" << s.stage
 				  << ",\"affinity\":" << num(s.affinity) << ",\"fear\":" << num(s.fear)
 				  << ",\"familiar\":" << num(s.familiarity) << ",\"kin\":" << (s.kin ? "true" : "false");
@@ -467,6 +501,18 @@ class LlmMind : public CreatureMind {
 		j << "]";
 
 		j << ",\"heard\":" << heard;
+		if (p.handPat)
+			j << ",\"handPat\":true";
+		if (p.handSlap)
+			j << ",\"handSlap\":true";
+		if (p.heardAge >= 0) {
+			if (p.heardVerb >= 0 && (size_t)p.heardVerb < engine.wordlist.size())
+				j << ",\"heardVerb\":" << jsonString(trimmed(engine.wordlist[p.heardVerb]));
+			if (p.heardNoun >= 0)
+				j << ",\"heardNoun\":" << jsonString(thingName(p.heardNoun));
+			if (p.heardNamed)
+				j << ",\"heardNamed\":true";
+		}
 		j << ",\"stimuli\":[";
 		first = true;
 		for (const StimulusEvent& s : p.stimuli) {
@@ -536,9 +582,23 @@ class LlmMind : public CreatureMind {
 		bool handCame = handNear && !handWasNear;
 		handWasNear = handNear;
 		unsigned int since = p.tick >= lastAsk ? p.tick - lastAsk : thinkEvery;
+		// the hand spoke to it (it heard; the line is new)
+		handText.clear();
+		std::string line;
+		unsigned int lineTick = 0;
+		if (p.heardAge >= 0 && handLine(400, line, lineTick) && lineTick != handLineTick) {
+			handText = line;
+			handLineTick = lineTick;
+		}
 		std::string why;
 		if (!askedOnce)
 			why = "start";
+		else if (!handText.empty())
+			why = "hand-spoke";
+		else if (since >= 2 && p.handSlap)
+			why = "slapped";
+		else if (since >= 2 && p.handPat)
+			why = "patted";
 		else if (!p.asleep && since >= 5 && notable)
 			why = "event";
 		else if (!p.asleep && since >= 5 && !met.empty())
@@ -594,7 +654,10 @@ class LlmMind : public CreatureMind {
 			std::string why = askReason(p, notable);
 			if (!why.empty()) {
 				std::ostringstream extra;
-				extra << ",\"reason\":" << jsonString(why) << ",\"known\":[";
+				extra << ",\"reason\":" << jsonString(why);
+				if (!handText.empty())
+					extra << ",\"handSaid\":" << jsonString(handText);
+				extra << ",\"known\":[";
 				for (size_t i = 0; i < p.knownWords.size(); i++)
 					extra << (i ? "," : "") << p.knownWords[i];
 				extra << "]";
