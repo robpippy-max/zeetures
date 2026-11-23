@@ -74,6 +74,8 @@ void hearMachineWord(Agent* machine, int word, bool aloud);
 //   "love"       a kiss that pleased
 //   "greet:G"    a creature of genus G (1 norn, 2 grendel, 3 ettin) came into view
 //   "babble"     nothing in particular
+//   "words:A:B"  these word-list words, in order (the llm mind; up to four,
+//                a child one)
 // Babies only babble and cry; children say one word; the grown say short
 // phrases; the senile trail off. Words the creature has not learned are
 // shown in its own tongue.

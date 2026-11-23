@@ -908,6 +908,9 @@ MindPerception oldCreature::buildPerception() {
 	p.creatureId = parentagent->getUNID();
 	if (engine.version == 2)
 		p.self = world.history->findMoniker(getGenome());
+	for (size_t w = 0; w < vocab.size(); w++)
+		if (knowsWord(this, (int)w))
+			p.knownWords.push_back((int)w);
 	p.temperament = temperament.z;
 	static const bool noMindGenes = devenv("OPENC2E_NO_MIND_GENES") != nullptr; // (to compare: every mind gene average)
 	if (!noMindGenes)

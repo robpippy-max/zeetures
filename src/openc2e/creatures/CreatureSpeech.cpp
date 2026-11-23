@@ -433,6 +433,18 @@ Utterance phraseFor(const std::string& meaning, Agent* creature, oldCreature* c)
 		return u;
 	}
 
+	// chosen words (the llm mind, robpippy-max fork 2026-11-22):
+	// "words:A:B:C", word-list indices, said in order; learned ones as words,
+	// the rest in its own tongue. A child says one word, the grown up to four.
+	if (kind == "words") {
+		std::vector<int> words;
+		size_t most = stage == 1 ? 1 : 4;
+		for (size_t i = 1; i < p.size() && words.size() < most; i++)
+			words.push_back(atoi(p[i].c_str()));
+		say(words, "");
+		return u;
+	}
+
 	std::vector<Wording> ways;
 	std::string end;
 	if (kind == "need") {

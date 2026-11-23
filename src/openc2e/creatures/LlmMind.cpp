@@ -2,20 +2,35 @@
  *  LlmMind.cpp
  *  openc2e (Zeetures fork: robpippy-max/zeetures, branch llm-mind)
  *
- *  The "llm" mind, phase 1: a stub. It wraps Zeetures's homeostat mind and
- *  changes nothing about how the creature behaves. It only writes what the
- *  creature perceives, and what the homeostat chose, to a JSON-lines log, one
- *  file per creature. Later phases add a local language model (via a Python
- *  sidecar and Ollama) as a slow layer on top; see docs/architecture.md in
- *  the creatures-ai repo.
+ *  The "llm" mind. Select it with --mind llm.
  *
- *  Select it with --mind llm.
+ *  It wraps Zeetures's homeostat mind, which keeps running every tick and
+ *  stays in charge of the body. On top of that, each creature now and then
+ *  sends what it perceives to a sidecar program on this machine (the
+ *  creatures-ai "mind bridge", which asks a local language model through
+ *  Ollama), and shows what comes back as its own speech and thought
+ *  bubbles. The game never waits for the sidecar: a background thread owns
+ *  the connection, and with no sidecar running the creature is simply the
+ *  homeostat. See docs/architecture.md in the creatures-ai repo.
  *
- *  Log folder: $ZEETURES_MIND_LOG_DIR, else ~/Documents/Creatures/logs/mind.
- *  Logging pace: every $ZEETURES_MIND_LOG_EVERY mind ticks (default 10, about
- *  four seconds), and also on any tick with a notable stimulus, a new
- *  decision or speech. Shouts and signs heard (STIM SHOU / STIM SIGN, which
- *  arrive almost every tick) are only counted ("heard"), not listed.
+ *  When a creature asks: on a timer (awake every $ZEETURES_MIND_THINK_EVERY
+ *  mind ticks, default 20, about eight seconds; asleep every
+ *  $ZEETURES_MIND_SLEEP_EVERY, default 60), and sooner when something
+ *  happens (a notable stimulus, someone new in view, the hand coming near).
+ *  One question at a time per creature.
+ *
+ *  Connection: 127.0.0.1, port $ZEETURES_MIND_PORT (default 47474), lines
+ *  of text. Game to sidecar: one JSON object per line ("hello" with the
+ *  game's word list on connecting; then "think" and "died"). Sidecar to
+ *  game: "R<TAB>moniker<TAB>say meaning<TAB>thought,symbols<TAB>key".
+ *  $ZEETURES_MIND_BRIDGE=0 turns the bridge off.
+ *
+ *  Diary: what each creature perceives and chooses is also written to a
+ *  JSON-lines log, one file per creature, in $ZEETURES_MIND_LOG_DIR, else
+ *  ~/Documents/Creatures/logs/mind: every $ZEETURES_MIND_LOG_EVERY mind
+ *  ticks (default 10), and on any tick with a notable stimulus, a new
+ *  decision, speech or thought. Shouts and signs heard (STIM SHOU / STIM
+ *  SIGN, which arrive almost every tick) are only counted ("heard").
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -32,12 +47,30 @@
 #include "CreatureMind.h"
 #include "Engine.h"
 
+#include <fmt/core.h>
+
+#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <mutex>
+#include <set>
 #include <sstream>
+#include <thread>
+
+#ifndef _WIN32
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 std::unique_ptr<CreatureMind> createHomeostatMind(); // HomeostatMind.cpp
 
@@ -46,6 +79,9 @@ namespace {
 const char* const LLM_DRIVE_NAMES[17] = {
 	"pain", "pleasure", "hunger", "cold", "hot", "tired", "sleepy", "lonely",
 	"crowded", "fear", "bored", "anger", "sex", "injury", "suffocate", "thirst", "stress"};
+
+const int HAND_CATEGORY = 1; // C2: the hand (2 1 1)
+const float HAND_NEAR = 150; // world pixels
 
 std::string jsonString(const std::string& s) {
 	std::string o = "\"";
@@ -68,6 +104,29 @@ std::string jsonString(const std::string& s) {
 	return o + "\"";
 }
 
+std::string num(float f) {
+	char buf[32];
+	std::snprintf(buf, sizeof buf, "%.3g", f);
+	return buf;
+}
+
+std::string trimmed(std::string s) {
+	while (!s.empty() && (s.back() == ' ' || s.back() == '\r' || s.back() == '\n'))
+		s.pop_back();
+	while (!s.empty() && s.front() == ' ')
+		s.erase(s.begin());
+	return s;
+}
+
+unsigned int envCount(const char* name, unsigned int fallback) {
+	if (const char* e = std::getenv(name)) {
+		int n = std::atoi(e);
+		if (n > 0)
+			return (unsigned int)n;
+	}
+	return fallback;
+}
+
 // creature kinds as perceptions number them (0-based in practice; checked in
 // play 2026-11-22: 1YRK a Grendel logs 1, 2LRD an Ettin logs 2)
 const char* kindName(int genus) {
@@ -87,11 +146,7 @@ std::string thingName(int category) {
 	if (category == MIND_ROTTEN_FRUIT)
 		return "rotten fruit";
 	size_t w = 16 + (size_t)category;
-	std::string s = category >= 0 && w < engine.wordlist.size() ? engine.wordlist[w] : "";
-	while (!s.empty() && (s.back() == ' ' || s.back() == '\r' || s.back() == '\n'))
-		s.pop_back();
-	while (!s.empty() && s.front() == ' ')
-		s.erase(s.begin());
+	std::string s = category >= 0 && w < engine.wordlist.size() ? trimmed(engine.wordlist[w]) : "";
 	for (char& c : s)
 		c = (char)tolower((unsigned char)c);
 	return s.empty() ? "kind " + std::to_string(category) : s;
@@ -123,12 +178,6 @@ bool background(const StimulusEvent& s) {
 	return s.command == "STIM SHOU" || s.command == "STIM SIGN";
 }
 
-std::string num(float f) {
-	char buf[32];
-	std::snprintf(buf, sizeof buf, "%.3g", f);
-	return buf;
-}
-
 std::filesystem::path logDir() {
 	if (const char* d = std::getenv("ZEETURES_MIND_LOG_DIR"))
 		return d;
@@ -136,22 +185,230 @@ std::filesystem::path logDir() {
 	return std::filesystem::path(home ? home : ".") / "Documents" / "Creatures" / "logs" / "mind";
 }
 
-unsigned int logEvery() {
-	if (const char* e = std::getenv("ZEETURES_MIND_LOG_EVERY")) {
-		int n = std::atoi(e);
-		if (n > 0)
-			return (unsigned int)n;
+// ---- the bridge to the sidecar ----------------------------------------------
+
+struct Reply {
+	std::string say; // a speech meaning (CreatureSpeech.h), or empty
+	std::vector<std::string> thought; // thought-bubble symbols, or empty
+	std::string key;
+};
+
+std::vector<std::string> split(const std::string& s, char sep) {
+	std::vector<std::string> out;
+	size_t start = 0;
+	for (;;) {
+		size_t c = s.find(sep, start);
+		out.push_back(s.substr(start, c == std::string::npos ? std::string::npos : c - start));
+		if (c == std::string::npos)
+			break;
+		start = c + 1;
 	}
-	return 10;
+	return out;
 }
+
+// One connection for all creatures, owned by a background thread so that the
+// game never waits on the network. Lines to send are queued; replies are kept
+// by moniker until that creature's next tick picks them up.
+class Bridge {
+  public:
+	static Bridge& get() {
+		static Bridge b;
+		return b;
+	}
+	bool enabled() const { return on; }
+	bool connected() const { return up; }
+	void setHello(const std::string& line) {
+		std::lock_guard<std::mutex> l(m);
+		if (hello.empty()) {
+			hello = line;
+			if (up)
+				outq.push_back(line);
+		}
+	}
+	bool hasHello() {
+		std::lock_guard<std::mutex> l(m);
+		return !hello.empty();
+	}
+	void send(const std::string& line) {
+		if (!up)
+			return; // nothing waits for a sidecar that isn't there
+		std::lock_guard<std::mutex> l(m);
+		if (outq.size() > 256)
+			outq.pop_front();
+		outq.push_back(line);
+	}
+	bool take(const std::string& who, Reply& r) {
+		std::lock_guard<std::mutex> l(m);
+		auto it = replies.find(who);
+		if (it == replies.end())
+			return false;
+		r = it->second;
+		replies.erase(it);
+		return true;
+	}
+
+  private:
+	bool on = true;
+	int port = 47474;
+	std::atomic<bool> stop{false}, up{false};
+	std::mutex m;
+	std::string hello;
+	std::deque<std::string> outq;
+	std::map<std::string, Reply> replies;
+	std::thread th;
+
+	Bridge() {
+		if (const char* e = std::getenv("ZEETURES_MIND_BRIDGE"))
+			on = std::string(e) != "0";
+		port = (int)envCount("ZEETURES_MIND_PORT", 47474);
+#ifdef _WIN32
+		on = false; // the bridge is written for macOS and Linux
+#endif
+		if (on) {
+			fmt::print("* llm mind: looking for the mind bridge on 127.0.0.1:{}\n", port);
+			th = std::thread([this] { run(); });
+		}
+	}
+	~Bridge() {
+		stop = true;
+		if (th.joinable())
+			th.join();
+	}
+
+	void pause(int ms) {
+		for (int i = 0; i < ms / 100 && !stop; i++)
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+
+	void received(const std::string& line) {
+		auto f = split(line, '\t');
+		if (f.size() < 2 || f[0] != "R" || f[1].empty())
+			return;
+		Reply r;
+		if (f.size() > 2)
+			r.say = f[2];
+		if (f.size() > 3 && !f[3].empty())
+			r.thought = split(f[3], ',');
+		if (f.size() > 4)
+			r.key = f[4];
+		std::lock_guard<std::mutex> l(m);
+		replies[f[1]] = r;
+	}
+
+	void run() {
+#ifndef _WIN32
+		bool told = false;
+		while (!stop) {
+			int fd = socket(AF_INET, SOCK_STREAM, 0);
+			if (fd < 0) {
+				pause(2000);
+				continue;
+			}
+#ifdef SO_NOSIGPIPE
+			int one = 1;
+			setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
+			sockaddr_in a{};
+			a.sin_family = AF_INET;
+			a.sin_port = htons((uint16_t)port);
+			inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
+			if (connect(fd, (sockaddr*)&a, sizeof a) != 0) {
+				close(fd);
+				pause(2000);
+				continue;
+			}
+			fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+			fmt::print("* llm mind: connected to the mind bridge\n");
+			told = false;
+			std::string wbuf, rbuf;
+			{
+				std::lock_guard<std::mutex> l(m);
+				outq.clear();
+				if (!hello.empty())
+					wbuf = hello;
+			}
+			up = true;
+			while (!stop) {
+				{
+					std::lock_guard<std::mutex> l(m);
+					while (!outq.empty()) {
+						wbuf += outq.front();
+						outq.pop_front();
+					}
+				}
+				pollfd pf{fd, (short)(POLLIN | (wbuf.empty() ? 0 : POLLOUT)), 0};
+				int r = poll(&pf, 1, 100);
+				if (r < 0)
+					break;
+				if (pf.revents & (POLLERR | POLLHUP | POLLNVAL))
+					break;
+				if (pf.revents & POLLIN) {
+					char buf[8192];
+					ssize_t n = recv(fd, buf, sizeof buf, 0);
+					if (n <= 0)
+						break;
+					rbuf.append(buf, (size_t)n);
+					size_t nl;
+					while ((nl = rbuf.find('\n')) != std::string::npos) {
+						received(rbuf.substr(0, nl));
+						rbuf.erase(0, nl + 1);
+					}
+					if (rbuf.size() > 1 << 20)
+						rbuf.clear();
+				}
+				if (!wbuf.empty() && (pf.revents & POLLOUT)) {
+#ifdef MSG_NOSIGNAL
+					ssize_t n = ::send(fd, wbuf.data(), wbuf.size(), MSG_NOSIGNAL);
+#else
+					ssize_t n = ::send(fd, wbuf.data(), wbuf.size(), 0);
+#endif
+					if (n < 0)
+						break;
+					wbuf.erase(0, (size_t)n);
+				}
+			}
+			up = false;
+			close(fd);
+			if (!stop && !told) {
+				fmt::print("* llm mind: lost the mind bridge; creatures carry on with the homeostat\n");
+				told = true;
+			}
+			pause(2000);
+		}
+#endif
+	}
+};
+
+std::string helloLine() {
+	std::ostringstream j;
+	j << "{\"event\":\"hello\",\"version\":1,\"words\":[";
+	for (size_t i = 0; i < engine.wordlist.size(); i++)
+		j << (i ? "," : "") << jsonString(trimmed(engine.wordlist[i]));
+	j << "]}\n";
+	return j.str();
+}
+
+// ---- the mind ------------------------------------------------------------------
 
 class LlmMind : public CreatureMind {
 	std::unique_ptr<CreatureMind> inner = createHomeostatMind();
 	std::ofstream log;
 	bool logTried = false;
-	unsigned int every = logEvery();
+	unsigned int every = envCount("ZEETURES_MIND_LOG_EVERY", 10);
+	unsigned int thinkEvery = envCount("ZEETURES_MIND_THINK_EVERY", 20);
+	unsigned int sleepEvery = envCount("ZEETURES_MIND_SLEEP_EVERY", 60);
 	unsigned int sinceLog = 0;
 	unsigned int heard = 0; // shouts and signs since the last line
+	// asking the sidecar
+	bool pending = false;
+	unsigned int askedAt = 0, lastAsk = 0;
+	bool askedOnce = false;
+	std::set<std::string> lastSeen; // creatures in view when it last asked
+	bool handWasNear = false;
+
+	std::string id(const MindPerception& p) const {
+		return p.self.empty() ? "creature-" + std::to_string(p.creatureId) : p.self;
+	}
 
 	void openLog(const MindPerception& p) {
 		if (logTried)
@@ -160,21 +417,19 @@ class LlmMind : public CreatureMind {
 		std::error_code ec;
 		auto dir = logDir();
 		std::filesystem::create_directories(dir, ec);
-		std::string name = p.self.empty() ? "creature-" + std::to_string(p.creatureId) : p.self;
+		std::string name = id(p);
 		for (char& c : name)
 			if (!(isalnum((unsigned char)c) || c == '-' || c == '_'))
 				c = '_';
 		log.open(dir / (name + ".jsonl"), std::ios::app);
 	}
 
-	void write(const char* event, const MindPerception& p, const MindOutput* out) {
-		openLog(p);
-		if (!log)
-			return;
+	// what it perceives (and chose), as one JSON object without a newline
+	std::string perceptionJson(const char* event, const MindPerception& p, const MindOutput* out, const std::string& extra) const {
 		std::ostringstream j;
 		j << "{\"event\":" << jsonString(event)
 		  << ",\"tick\":" << p.tick
-		  << ",\"self\":" << jsonString(p.self)
+		  << ",\"self\":" << jsonString(id(p))
 		  << ",\"kind\":" << jsonString(kindName(p.genus))
 		  << ",\"female\":" << (p.female ? "true" : "false")
 		  << ",\"stage\":" << jsonString(format_as(p.stage))
@@ -201,6 +456,7 @@ class LlmMind : public CreatureMind {
 			j << (first ? "" : ",") << "{\"what\":" << jsonString(thingName(s.category)) << ",\"cat\":" << s.category << ",\"dist\":" << num(s.distance);
 			if (!s.who.empty())
 				j << ",\"who\":" << jsonString(s.who) << ",\"kind\":" << jsonString(kindName(s.genus))
+				  << ",\"female\":" << (s.female ? "true" : "false") << ",\"stage\":" << s.stage
 				  << ",\"affinity\":" << num(s.affinity) << ",\"fear\":" << num(s.fear)
 				  << ",\"familiar\":" << num(s.familiarity) << ",\"kin\":" << (s.kin ? "true" : "false");
 			if (s.edible > 0)
@@ -238,8 +494,7 @@ class LlmMind : public CreatureMind {
 			j << ",\"decision\":" << out->decision;
 			if (out->decision >= 0)
 				j << ",\"do\":" << jsonString(actionLabel(out->decision));
-			j
-			  << ",\"sleep\":" << out->sleep;
+			j << ",\"sleep\":" << out->sleep;
 			if (!out->say.empty())
 				j << ",\"say\":" << jsonString(out->say);
 			if (!out->thought.empty()) {
@@ -250,9 +505,51 @@ class LlmMind : public CreatureMind {
 			}
 			j << "}";
 		}
-		j << "}\n";
-		log << j.str();
+		j << extra << "}";
+		return j.str();
+	}
+
+	void write(const char* event, const MindPerception& p, const MindOutput* out, const std::string& extra = "") {
+		openLog(p);
+		if (!log)
+			return;
+		log << perceptionJson(event, p, out, extra) << "\n";
 		log.flush();
+	}
+
+	// whether to ask the sidecar now, and why
+	std::string askReason(const MindPerception& p, bool notable) {
+		std::set<std::string> seen;
+		bool handNear = false;
+		for (const SeenAgent& s : p.visible) {
+			if (!s.who.empty())
+				seen.insert(s.who);
+			if (s.category == HAND_CATEGORY && s.distance < HAND_NEAR)
+				handNear = true;
+		}
+		std::string met;
+		for (const auto& w : seen)
+			if (!lastSeen.count(w)) {
+				met = w;
+				break;
+			}
+		bool handCame = handNear && !handWasNear;
+		handWasNear = handNear;
+		unsigned int since = p.tick >= lastAsk ? p.tick - lastAsk : thinkEvery;
+		std::string why;
+		if (!askedOnce)
+			why = "start";
+		else if (!p.asleep && since >= 5 && notable)
+			why = "event";
+		else if (!p.asleep && since >= 5 && !met.empty())
+			why = "met:" + met;
+		else if (!p.asleep && since >= 5 && handCame)
+			why = "hand";
+		else if (since >= (p.asleep ? sleepEvery : thinkEvery))
+			why = p.asleep ? "asleep" : "timer";
+		if (!why.empty())
+			lastSeen = seen;
+		return why;
 	}
 
   public:
@@ -265,6 +562,22 @@ class LlmMind : public CreatureMind {
 
 	MindOutput tick(const MindPerception& p) override {
 		MindOutput out = inner->tick(p);
+		Bridge& bridge = Bridge::get();
+
+		// a reply from the sidecar: its own words and thoughts
+		Reply r;
+		if (bridge.take(id(p), r)) {
+			pending = false;
+			if (!r.say.empty())
+				out.say = r.say;
+			if (!r.thought.empty()) {
+				out.thought = r.thought;
+				out.thoughtKey = r.key.empty() ? "llm" : r.key;
+			}
+		}
+		if (pending && p.tick - askedAt > 50)
+			pending = false; // lost (the sidecar restarted, or is very busy)
+
 		sinceLog++;
 		bool notable = false;
 		for (const StimulusEvent& s : p.stimuli) {
@@ -273,6 +586,25 @@ class LlmMind : public CreatureMind {
 			else
 				notable = true;
 		}
+
+		// ask, if it is time
+		if (bridge.enabled() && bridge.connected() && !pending) {
+			if (!bridge.hasHello())
+				bridge.setHello(helloLine());
+			std::string why = askReason(p, notable);
+			if (!why.empty()) {
+				std::ostringstream extra;
+				extra << ",\"reason\":" << jsonString(why) << ",\"known\":[";
+				for (size_t i = 0; i < p.knownWords.size(); i++)
+					extra << (i ? "," : "") << p.knownWords[i];
+				extra << "]";
+				bridge.send(perceptionJson("think", p, &out, extra.str()) + "\n");
+				pending = true;
+				askedOnce = true;
+				askedAt = lastAsk = p.tick;
+			}
+		}
+
 		if (sinceLog >= every || notable || out.decision >= 0 || !out.say.empty() || !out.thought.empty()) {
 			write("tick", p, &out);
 			sinceLog = 0;
@@ -283,12 +615,16 @@ class LlmMind : public CreatureMind {
 
 	void died(const MindPerception& p) override {
 		write("died", p, nullptr);
+		Bridge& bridge = Bridge::get();
+		if (bridge.connected())
+			bridge.send(perceptionJson("died", p, nullptr, "") + "\n");
 		inner->died(p);
 	}
 
 	std::string debugState() const override { return inner->debugState(); }
 	bool view(MindView& v) const override { return inner->view(v); }
-	// Phase 1 keeps no state of its own, so its saved state is exactly the
+	// It keeps no state of its own in the world save yet (its memories live
+	// with the sidecar, by moniker), so its saved state is exactly the
 	// homeostat's (WorldSave lets the two load each other's saves).
 	std::string saveState() const override { return inner->saveState(); }
 	void loadState(const std::string& s) override { inner->loadState(s); }

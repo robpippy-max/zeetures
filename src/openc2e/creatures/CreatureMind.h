@@ -120,6 +120,9 @@ struct MindAction {
 struct MindPerception {
 	int creatureId = 0; // the creature agent's UNID, for logging
 	std::string self; // its moniker (C2), or empty
+	// the words of the game's word list it has learned (indices), for the
+	// llm mind to speak with (robpippy-max fork, 2026-11-22)
+	std::vector<int> knownWords;
 	unsigned int tick = 0; // creature age in brain ticks
 	lifestage stage = baby;
 	bool asleep = false;
