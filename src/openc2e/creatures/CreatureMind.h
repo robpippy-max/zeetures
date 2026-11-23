@@ -117,6 +117,18 @@ struct MindAction {
 	bool needsObject; // the script acts on the attended object (_it_, appr, aim:)
 };
 
+// A wish of the creature's own (robpippy-max fork, 2026-11-23: "plans that
+// steer the body"): something the llm mind means to do next. The homeostat
+// adds a pull to its options that serve it, as the hand's call does, fading
+// to nothing as a survival need grows urgent, so the body always comes first.
+struct MindWish {
+	int category = -1; // a kind of thing (world category), or -1
+	std::string who; // a particular creature (moniker), or empty
+	int decision = -1; // the action (event 16 + decision), or -1: any dealing with it
+	bool avoid = false; // keep away from it instead
+	float strength = 0.5f; // 0-1
+};
+
 struct MindPerception {
 	int creatureId = 0; // the creature agent's UNID, for logging
 	std::string self; // its moniker (C2), or empty
@@ -246,6 +258,8 @@ struct MindPerception {
 	// a custom genome's brain add-ons, as the mind's settings to multiply
 	// (creatures/BrainProfiles.h); null or empty: none
 	const std::vector<std::pair<std::string, float>>* brainSettings = nullptr;
+	// the creature's own wishes (MindWish), from a mind that wraps this one
+	std::vector<MindWish> wishes;
 };
 
 struct MindOutput {
@@ -278,6 +292,8 @@ struct MindOutput {
 	// well (+1) or badly (-1), or 0: what shapes a young creature's
 	// curiosity (Temperament.h, EXPERIENCE_EXPLORE)
 	int noveltyOutcome = 0;
+	// the wish (index into MindPerception::wishes) the new choice serves, or -1
+	int wishFollowed = -1;
 };
 
 // What a mind holds, for the Mind Kit (openc2e addition, owner 2026-11-11):

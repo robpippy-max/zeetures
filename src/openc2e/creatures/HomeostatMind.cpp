@@ -283,6 +283,13 @@ struct Params {
 	// fades; slapped for not listening, it listens better next time.
 	float callPull = 0.25f;
 	int callTicks = 8; // mind ticks, about 3 s
+	// The creature's own wishes (MindWish; llm mind, 2026-11-23): the pull a
+	// full-strength wish adds to the options that serve it; walking away from
+	// what it would avoid gets wishAwayShare of that; and none of it while
+	// any survival need is at wishSurvivalLimit or more (the body first).
+	float wishPull = 0.06f;
+	float wishAwayShare = 0.6f;
+	float wishSurvivalLimit = 0.75f;
 	float obey = 0.15f;
 	int heardTicks = 24; // about 10 s
 	int praiseTicks = 30;
@@ -737,6 +744,7 @@ struct Candidate {
 	bool route = false; // a step along a route on the place map
 	bool looking = false; // looking round at what it was called to
 	std::string place; // a trip from the sense of place: "mate:<moniker>", "favourite:<need>", "leave:<need>", "explore"
+	int wish = -1; // the creature's own wish (MindPerception::wishes) this serves, or -1
 };
 
 struct CallButton {
@@ -1714,7 +1722,9 @@ class HomeostatMind : public CreatureMind {
 		}
 		if (candidates.empty())
 			return out;
+		applyWishes(p, d, candidates);
 		Candidate choice = pick(candidates, D);
+		out.wishFollowed = choice.wish;
 		noteChoiceForView(candidates, choice, d, D);
 		// Asleep but not choosing to sleep (an interrupted sleep script, or
 		// a world saved mid-sleep): wake up first, or no other action can run.
@@ -5267,6 +5277,62 @@ class HomeostatMind : public CreatureMind {
 	// Softmax choice; temperature falls as arousal (D) rises.
 	// Softmax over the top few candidates (an attention bottleneck, so many
 	// mediocre options cannot outweigh a clearly better one together).
+	// The creature's own wishes (MindWish): a pull on the options that serve
+	// them, scaled down as the most pressing survival need nears
+	// wishSurvivalLimit. A wish to avoid something pushes down every dealing
+	// with it and pulls toward walking away from it while it is in view.
+	// OPENC2E_NO_WISHES turns them off (to compare).
+	void applyWishes(const MindPerception& p, const std::array<float, NUM_DRIVES>& d, std::vector<Candidate>& cands) {
+		static const bool off = devenv("OPENC2E_NO_WISHES") != nullptr;
+		if (p.wishes.empty() || off)
+			return;
+		float survival = std::max({d[PAIN], d[HUNGER], d[COLD], d[HOT], d[INJURY], d[SUFFOCATE], d[THIRST]});
+		float room = std::clamp(1.0f - survival / prm.wishSurvivalLimit, 0.0f, 1.0f);
+		if (room <= 0.0f)
+			return;
+		for (size_t wi = 0; wi < p.wishes.size(); wi++) {
+			const MindWish& w = p.wishes[wi];
+			float pull = prm.wishPull * std::clamp(w.strength, 0.0f, 1.0f) * room;
+			// where what it would avoid is, if in view: dx (east positive)
+			bool seen = false;
+			float awayDx = 0;
+			if (w.avoid)
+				for (auto& s : p.visible)
+					if ((!w.who.empty() && s.who == w.who) || (w.who.empty() && w.category >= 0 && s.category == w.category)) {
+						seen = true;
+						awayDx = dxTo(p, s.x);
+						break;
+					}
+			for (auto& c : cands) {
+				bool thing;
+				if (!w.who.empty())
+					thing = c.who == w.who;
+				else if (w.category >= 0)
+					thing = c.category == w.category || c.seekCategory == w.category;
+				else
+					thing = c.category < 0; // an action that needs no object (rest, sleep)
+				if (w.avoid) {
+					if (thing && c.category >= 0)
+						c.score -= pull;
+					else if (seen && c.category < 0 && !c.chain && c.place.empty() &&
+							 ((c.decision == 10 && awayDx > 0) || (c.decision == 11 && awayDx < 0))) {
+						c.score += pull * prm.wishAwayShare;
+						if (c.wish < 0)
+							c.wish = (int)wi;
+					}
+					continue;
+				}
+				// (a trip toward where that kind of thing was last seen serves a
+				// wish to do anything with it: it is the way there)
+				if (!thing || (w.decision >= 0 && c.decision != w.decision && !(w.category >= 0 && c.seekCategory == w.category)))
+					continue;
+				c.score += pull;
+				if (c.wish < 0)
+					c.wish = (int)wi;
+			}
+		}
+	}
+
 	Candidate pick(std::vector<Candidate> all, float D) {
 		// What to do, then what to do it to: keep only each action's best
 		// object, so one action on many objects cannot crowd out the rest.

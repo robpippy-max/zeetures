@@ -25,7 +25,13 @@
  *  Connection: 127.0.0.1, port $ZEETURES_MIND_PORT (default 47474), lines
  *  of text. Game to sidecar: one JSON object per line ("hello" with the
  *  game's word list on connecting; then "think" and "died"). Sidecar to
- *  game: "R<TAB>moniker<TAB>say meaning<TAB>thought,symbols<TAB>key".
+ *  game: "R<TAB>moniker<TAB>say meaning<TAB>thought,symbols<TAB>key<TAB>plan".
+ *  The plan (2026-11-23, optional) is up to three wishes separated by ";",
+ *  each "kind:target:decision:strength" (kind cat, who, act, avoid-cat or
+ *  avoid-who; strength 0-100). For $ZEETURES_MIND_WISH_TICKS mind ticks
+ *  (default 75, about 30 s), or until the next plan, they pull the
+ *  homeostat's choices toward (or away from) what they name; survival
+ *  needs always win (HomeostatMind::applyWishes).
  *  $ZEETURES_MIND_BRIDGE=0 turns the bridge off.
  *
  *  Diary: what each creature perceives and chooses is also written to a
@@ -55,6 +61,7 @@
 
 #include <fmt/core.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -222,7 +229,12 @@ struct Reply {
 	std::string say; // a speech meaning (CreatureSpeech.h), or empty
 	std::vector<std::string> thought; // thought-bubble symbols, or empty
 	std::string key;
+	// its plan (2026-11-23): what it means to do next, as wishes for the
+	// homeostat; hasPlan false when the sidecar sent no plan field at all
+	bool hasPlan = false;
+	std::vector<MindWish> plan;
 };
+
 
 std::vector<std::string> split(const std::string& s, char sep) {
 	std::vector<std::string> out;
@@ -235,6 +247,32 @@ std::vector<std::string> split(const std::string& s, char sep) {
 		start = c + 1;
 	}
 	return out;
+}
+
+// One wish from the plan field: "kind:target:decision:strength", kind one of
+// cat, who, act (no object), avoid-cat, avoid-who; strength 0-100.
+bool parseWish(const std::string& s, MindWish& w) {
+	auto f = split(s, ':');
+	if (f.size() != 4)
+		return false;
+	try {
+		const std::string& kind = f[0];
+		w.avoid = kind.rfind("avoid-", 0) == 0;
+		std::string base = w.avoid ? kind.substr(6) : kind;
+		if (base == "cat")
+			w.category = std::stoi(f[1]);
+		else if (base == "who")
+			w.who = f[1];
+		else if (base != "act")
+			return false;
+		w.decision = f[2].empty() ? -1 : std::stoi(f[2]);
+		w.strength = std::clamp(std::stoi(f[3]) / 100.0f, 0.0f, 1.0f);
+	} catch (...) {
+		return false;
+	}
+	if (w.who.empty() && w.category < 0 && w.decision < 0)
+		return false; // a wish for nothing in particular
+	return true;
 }
 
 // One connection for all creatures, owned by a background thread so that the
@@ -322,6 +360,14 @@ class Bridge {
 			r.thought = split(f[3], ',');
 		if (f.size() > 4)
 			r.key = f[4];
+		if (f.size() > 5) {
+			r.hasPlan = true;
+			for (const auto& part : split(f[5], ';')) {
+				MindWish w;
+				if (!part.empty() && parseWish(part, w) && r.plan.size() < 3)
+					r.plan.push_back(w);
+			}
+		}
 		std::lock_guard<std::mutex> l(m);
 		replies[f[1]] = r;
 	}
@@ -438,6 +484,12 @@ class LlmMind : public CreatureMind {
 	bool handWasNear = false;
 	unsigned int handLineTick = 0; // the hand's line it last asked about
 	std::string handText; // set when the hand has just spoken to it
+	// its plan: wishes that steer the homeostat until wishUntil (mind ticks),
+	// and how many choices served each since it was made
+	std::vector<MindWish> wishes;
+	std::vector<int> wishDone;
+	unsigned int wishUntil = 0;
+	unsigned int wishTicks = envCount("ZEETURES_MIND_WISH_TICKS", 75); // about 30 s
 
 	std::string id(const MindPerception& p) const {
 		return p.self.empty() ? "creature-" + std::to_string(p.creatureId) : p.self;
@@ -542,6 +594,8 @@ class LlmMind : public CreatureMind {
 			if (out->decision >= 0)
 				j << ",\"do\":" << jsonString(actionLabel(out->decision));
 			j << ",\"sleep\":" << out->sleep;
+			if (out->wishFollowed >= 0)
+				j << ",\"wish\":" << out->wishFollowed;
 			if (!out->say.empty())
 				j << ",\"say\":" << jsonString(out->say);
 			if (!out->thought.empty()) {
@@ -551,6 +605,15 @@ class LlmMind : public CreatureMind {
 				j << "]";
 			}
 			j << "}";
+		}
+		if (!wishes.empty() && p.tick < wishUntil) {
+			j << ",\"wishes\":[";
+			for (size_t i = 0; i < wishes.size(); i++) {
+				const MindWish& w = wishes[i];
+				j << (i ? "," : "") << "{\"cat\":" << w.category << ",\"who\":" << jsonString(w.who) << ",\"do\":" << w.decision
+				  << ",\"avoid\":" << (w.avoid ? "true" : "false") << ",\"strength\":" << w.strength << ",\"done\":" << (i < wishDone.size() ? wishDone[i] : 0) << "}";
+			}
+			j << "]";
 		}
 		j << extra << "}";
 		return j.str();
@@ -623,12 +686,30 @@ class LlmMind : public CreatureMind {
 	}
 
 	MindOutput tick(const MindPerception& p) override {
-		MindOutput out = inner->tick(p);
 		Bridge& bridge = Bridge::get();
-
-		// a reply from the sidecar: its own words and thoughts
+		// a reply from the sidecar: its own words, thoughts and plan
 		Reply r;
-		if (bridge.take(id(p), r)) {
+		bool replied = bridge.take(id(p), r);
+		if (replied && r.hasPlan) {
+			wishes = r.plan;
+			wishDone.assign(wishes.size(), 0);
+			wishUntil = p.tick + wishTicks;
+		}
+		MindOutput out;
+		if (!wishes.empty() && p.tick < wishUntil) {
+			// the homeostat chooses, pulled by the creature's own wishes
+			MindPerception q = p;
+			q.wishes = wishes;
+			out = inner->tick(q);
+			if (out.wishFollowed >= 0 && out.wishFollowed < (int)wishDone.size())
+				wishDone[(size_t)out.wishFollowed]++;
+		} else {
+			wishes.clear();
+			wishDone.clear();
+			out = inner->tick(p);
+		}
+
+		if (replied) {
 			pending = false;
 			if (!r.say.empty())
 				out.say = r.say;
