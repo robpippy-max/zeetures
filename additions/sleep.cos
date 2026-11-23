@@ -10,13 +10,16 @@
 * 255 and could never sleep. The owner asked (2026-11-10) to replace that
 * rule for grendels and ettins (norns keep C2's): a grendel or ettin with
 * Sleepiness above 96 sleeps, however rested, until Sleepiness is below 10;
-* one only tired lies down to rest until Tiredness is below 48.
+* one only tired (Tiredness above 48) lies down to rest.
 *
 * Norns too (owner, 2026-11-12): in Home's logs most norns sat at the mind's
 * sleepiness cap (about 70% of their decisions) and rarely slept, being
 * sleepy but not tired. C2's norn script also dreams after sleeping (DREA,
 * which works C2's own brain); our creatures run their own mind, so that
 * part is left out.
+* Rest goes on until Tiredness is below 16 (2026-11-22; before, below 48, the
+* level it starts at, so a tired creature lay down, got up and lay down again
+* every few seconds), or half a minute, as it does not help every genome.
 * any world: it changes objects by kind, not Eden's map, so it runs on every
 * world (other Additions run only on worlds started from Eden.sfc).
 scrp 4 2 0 41
@@ -31,7 +34,11 @@ scrp 4 2 0 41
     aslp 0
   else
     doif driv 5 gt 48
-      loop impt 5 pose 58 wait 20 stm# writ targ 21 untl driv 5 lt 48
+      setv var0 0
+      loop
+        impt 5 pose 58 wait 20 stm# writ targ 21 addv var0 1
+        doif driv 5 lt 16 setv var0 15 endi
+      untl var0 ge 15
     endi
   endi
 endm
@@ -47,7 +54,11 @@ scrp 4 3 0 41
     aslp 0
   else
     doif driv 5 gt 48
-      loop impt 5 pose 58 wait 20 stm# writ targ 21 untl driv 5 lt 48
+      setv var0 0
+      loop
+        impt 5 pose 58 wait 20 stm# writ targ 21 addv var0 1
+        doif driv 5 lt 16 setv var0 15 endi
+      untl var0 ge 15
     endi
   endi
 endm
@@ -63,7 +74,11 @@ scrp 4 1 0 41
     aslp 0
   else
     doif driv 5 gt 48
-      loop impt 5 pose 58 wait 20 stm# writ targ 21 untl driv 5 lt 48
+      setv var0 0
+      loop
+        impt 5 pose 58 wait 20 stm# writ targ 21 addv var0 1
+        doif driv 5 lt 16 setv var0 15 endi
+      untl var0 ge 15
     endi
   endi
 endm

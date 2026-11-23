@@ -134,6 +134,7 @@ class monikerData {
 	void transferCreature(AgentRef c); // same creature, new body (openc2e: life stage changed at will)
 	void wasBorn();
 	void hasDied();
+	void cameBack(); // brought back to life after dying (the Syringe): alive in the records again
 	monikerstatus getStatus();
 };
 

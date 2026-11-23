@@ -39,6 +39,7 @@ const char* const SYMBOLS[] = {"hunger", "nose", "question", "heart", "feet", "s
 const int CELL = 64;
 
 const unsigned int SHOW_TICKS = 35; // 3.5 s, as a speech bubble
+const unsigned int Z_TICKS = 2; // a sleeper's Z: 0.2 s a frame
 const unsigned int SAME_AGAIN_TICKS = 300; // the same thought within 30 s: not shown again
 const int PIC = 19; // a picture's size in the bubble
 const int GAP = 3;
@@ -201,14 +202,28 @@ void think(Agent* creature, const std::vector<std::string>& items, const std::st
 		fmt::print("* THINKS {}: {}\n", creature->getUNID(), key);
 }
 
+// whether a thought bubble of its own is up now
+static bool thoughtShowing(const Agent* c) {
+	auto it = s_showing.find(c->getUNID());
+	if (it == s_showing.end() || mode() == OFF || (mode() == SELECTED && world.selectedcreature.get() != c))
+		return false;
+	return world.tickcount >= it->second.start && world.tickcount < it->second.start + SHOW_TICKS;
+}
+
 // C2's stars for a creature out cold (owner, 2026-11-13: "a halo of stars
 // starts circling around their heads in the same location as the
 // indicator halo"): the player's own star.s16, ten frames of a ring of
 // stars turning, drawn by the engine (no world script uses it) over each
 // unconscious creature, where the selection halo sits: over its head,
 // the ring's middle a little above the head's top
-static void drawStars(RenderTarget* surface, int adjustx, int adjusty, int wrapWidth) {
-	std::shared_ptr<creaturesImage> star;
+//
+// And its Z's over a sleeping one, for as long as it sleeps (a player,
+// 2026-11-22): the player's own zzzz.s16, a Z drifting up from the head,
+// shrinking and fading over 16 frames (the 17th is empty), which no world
+// script uses either. Each creature starts its own Z at its own time. Not
+// while a bubble of its own is up there, nor over a rider hidden in a lift.
+static void drawStates(RenderTarget* surface, int adjustx, int adjusty, int wrapWidth, Agent* skip) {
+	std::shared_ptr<creaturesImage> star, zzzz;
 	// (the creatures, gone over all the world's objects ten times a second,
 	// not every frame)
 	static std::vector<AgentRef> creatures;
@@ -225,34 +240,39 @@ static void drawStars(RenderTarget* surface, int adjustx, int adjusty, int wrapW
 			continue;
 		auto* ca = dynamic_cast<CreatureAgent*>(a.get());
 		auto* oc = ca ? dynamic_cast<oldCreature*>(ca->getCreature()) : nullptr;
-		if (!oc || !oc->isAlive() || !oc->isUnconscious())
+		if (!oc || !oc->isAlive() || !(oc->isUnconscious() || oc->isAsleep()))
 			continue;
-		if (!star) {
-			star = world.gallery ? world.gallery->getImage("star") : nullptr;
-			if (!star || star->numframes() == 0)
-				return;
+		bool out = oc->isUnconscious();
+		if (!out && (a.get() == skip || Bubble::hiddenRider(a.get()) || speechBubbleShowing(a.get()) || thoughtShowing(a.get())))
+			continue;
+		auto& image = out ? star : zzzz;
+		if (!image) {
+			image = world.gallery ? world.gallery->getImage(out ? "star" : "zzzz") : nullptr;
+			if (!image || image->numframes() == 0)
+				continue;
 		}
-		unsigned int frame = world.tickcount % star->numframes();
-		int w = (int)star->width(frame), h = (int)star->height(frame);
+		unsigned int frame = out ? world.tickcount % image->numframes() : (world.tickcount / Z_TICKS + a->getUNID() * 5) % image->numframes();
+		int w = (int)image->width(frame), h = (int)image->height(frame);
 		// round its head (lying down, its head is off to one side)
 		float cx = a->x + a->getWidth() / 2.0f;
 		float top = a->y;
 		if (auto* sc = dynamic_cast<SkeletalCreature*>(a.get()))
-			sc->headTop(cx, top);
+			if (float dx, dy; sc->headTop(cx, top) && sc->drawnHeadShift(dx, dy)) // (as drawn: SmoothMovement.cpp)
+				cx += dx, top += dy;
 		for (int pass = 0; pass < (wrapWidth > 0 ? 3 : 1); pass++) {
 			float shift = pass == 1 ? (float)wrapWidth : pass == 2 ? -(float)wrapWidth : 0.0f;
 			float sx = cx - w / 2.0f - adjustx + shift;
-			float sy = top - h * 0.6f - adjusty;
+			float sy = top - h * (out ? 0.6f : 0.85f) - adjusty;
 			if (sx + w < 0 || sx > surface->getWidth())
 				continue;
-			surface->renderCreaturesImage(*star, frame, (int)sx, (int)sy);
+			surface->renderCreaturesImage(*image, frame, (int)sx, (int)sy);
 		}
 	}
 }
 
 void draw(RenderTarget* surface, int adjustx, int adjusty, int wrapWidth, Agent* skip) {
 	if (engine.version == 2)
-		drawStars(surface, adjustx, adjusty, wrapWidth);
+		drawStates(surface, adjustx, adjusty, wrapWidth, skip);
 	// developer aid: OPENC2E_TEST_THOUGHT="hungry,east" (symbol names) makes
 	// the creature nearest the view's middle think that, again whenever its
 	// last has gone, for snapshots of the bubble
@@ -305,13 +325,19 @@ void draw(RenderTarget* surface, int adjustx, int adjusty, int wrapWidth, Agent*
 		int need = 16 + n * PIC + (n - 1) * GAP;
 		int size = need <= 112 ? 0 : need <= 176 ? 1 : 2;
 		float cx = c->x + c->getWidth() / 2.0f - adjustx;
-		bool leftside = cx < engine.camera->getWidth() / 2.0f;
+		// (a little to the left of the middle: a creature the camera follows
+		// is at the middle, where its bubble would go from side to side)
+		bool leftside = cx < engine.camera->getWidth() / 2.0f - 40.0f;
 		unsigned int frame = (leftside ? 27 : 24) + size;
 		int bw = (int)syst->width(frame), bh = (int)syst->height(frame);
 		for (int pass = 0; pass < (wrapWidth > 0 ? 3 : 1); pass++) {
 			float shift = pass == 1 ? (float)wrapWidth : pass == 2 ? -(float)wrapWidth : 0.0f;
 			float bx = leftside ? c->x + c->getWidth() - 2 - adjustx + shift : c->x - bw + 2 - adjustx + shift;
 			float by = c->y - bh - adjusty;
+			float dx, dy;
+			if (auto* sc = dynamic_cast<SkeletalCreature*>(c)) // (as drawn: SmoothMovement.cpp)
+				if (sc->drawnShift(dx, dy))
+					bx += dx, by += dy;
 			if (bx + bw < 0 || bx > surface->getWidth())
 				continue;
 			surface->renderCreaturesImage(*syst, frame, (int)bx, (int)by);

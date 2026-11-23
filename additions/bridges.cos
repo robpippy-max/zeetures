@@ -11,7 +11,11 @@
 
 * the walkway: a floor line rising from the west platform's floor (room
 * bottom, 0 up) to the east platform's (22 px up at the right wall), and
-* the floor door below made as solid as the platforms' own floors
+* the floor door below made as solid as the platforms' own floors. The gap's
+* room allowed nothing to be dropped in it (drop status 0): now above its
+* floor (1), as the platforms beside it, so the hand can put a creature down
+* on the catwalk (owner, 2026-11-22).
+room 227 7720 1175 7934 1326 room 227 4 room 227 5 room 227 6 room 227 7 room 227 8 room 227 9 room 227 12 room 227 13 room 227 14 room 227 15 room 227 16 room 227 17 1
 ssfc 227 2 0 0 214 22
 setv door 0 227 177 100
 

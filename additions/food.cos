@@ -479,15 +479,21 @@ endm
 * felt as pain (Exposure.cpp), and the relief has to be felt at once for a
 * poisoned creature to learn the place (12 game days in a Home copy without
 * it: no pull toward the volcano at all). After a while a fruit goes overripe, and later rots away.
-* Spring: dewberries, light and juicy.
+* Spring: dewberries, light and juicy. (Until 2026-11-22 the spring and summer
+* fruits gave only glucose, 60 and 90, where a fruit of the game gives 100
+* starch, each worth 12: hatchlings ate dozens and starved; reported by
+* players. Now about 1,500 and 1,800 (protein aside), still the lightest: autumn
+* about 3,100, winter 5,900.)
 scrp 2 25 141 12
   snde chwp
   * ripe (pictures 2 and 4) gives the full mix
   setv var0 pose doif var0 gt 3 subv var0 2 endi
   doif var0 le 2
     stim writ from 30 255 0 0 37 60 70 60 97 60 151 50
+    stim writ from 0 255 0 0 73 90 74 6 79 10 0 0
   else
     stim writ from 30 255 0 0 37 30 70 30 97 30 151 20
+    stim writ from 0 255 0 0 73 45 74 3 79 5 0 0
   endi
   * a volcanic bush's fruit also gives EDTA (157), the only cure for heavy
   * metals, which radiation by the volcano builds up, and soothes their pain
@@ -509,8 +515,10 @@ scrp 2 25 142 12
   setv var0 pose doif var0 gt 3 subv var0 2 endi
   doif var0 le 2
     stim writ from 30 255 0 0 37 80 70 90 97 40 36 40
+    stim writ from 0 255 0 0 73 110 74 6 79 10 0 0
   else
     stim writ from 30 255 0 0 37 40 70 45 97 20 36 20
+    stim writ from 0 255 0 0 73 55 74 3 79 5 0 0
   endi
   * a volcanic bush's fruit also gives EDTA (157), the only cure for heavy
   * metals, which radiation by the volcano builds up, and soothes their pain

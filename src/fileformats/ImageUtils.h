@@ -20,6 +20,10 @@ Image Stipple(const Image& image);
 // with on/off transparency kept (a pixel is opaque where at least half of
 // what it covers was); 16-bit and RGBA sprites are averaged, others nearest
 Image Scale(const Image& image, float k);
+// the image turned clockwise by an angle (radians) about the middle of its
+// pixel (cx, cy), in a square whose middle pixel that is (its side is
+// 2 * radius + 1, radius returned): area sampled, as Scale
+Image Turn(const Image& image, int cx, int cy, float angle, int& radius);
 // Colours muted toward grey and lightened a little (C2: a senile creature's
 // sprites, owner 2026-11-13): grey is the share of the way to each pixel's
 // own grey, lift how far toward white. Transparent pixels stay so.

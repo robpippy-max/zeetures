@@ -69,6 +69,42 @@ Name: "{autodesktop}\Zeetures"; Filename: "{app}\Zeetures.exe"; WorkingDir: "{ap
 
 [Run]
 Filename: "{app}\Zeetures.exe"; Description: "{cm:LaunchProgram,Zeetures}"; Flags: nowait postinstall skipifsilent
+; an update started by the game (Updater.cpp): /SILENT /RELAUNCH=1 starts it
+; again, in the world it was in (/WORLD=name)
+Filename: "{app}\Zeetures.exe"; Parameters: "{code:RelaunchParams}"; Flags: nowait; Check: Relaunching
+
+[Code]
+// An update started by the game runs while the game is closing: wait for it
+// to let go of its mutex (Updater.cpp holds ZeeturesRunning while it runs),
+// at most half a minute, so that its files can be replaced.
+function InitializeSetup(): Boolean;
+var
+  i: Integer;
+begin
+  i := 0;
+  while CheckForMutexes('ZeeturesRunning') and (i < 60) do
+  begin
+    Sleep(500);
+    i := i + 1;
+  end;
+  Result := True;
+end;
+
+function Relaunching(): Boolean;
+begin
+  Result := WizardSilent() and (ExpandConstant('{param:RELAUNCH|0}') = '1');
+end;
+
+function RelaunchParams(Param: String): String;
+var
+  world: String;
+begin
+  world := ExpandConstant('{param:WORLD|}');
+  if world = '' then
+    Result := ''
+  else
+    Result := '--world "' + world + '"';
+end;
 
 ; Uninstalling removes only the program: the player's worlds, saves and
 ; settings in Documents\My Games stay.

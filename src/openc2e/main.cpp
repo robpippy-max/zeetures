@@ -26,6 +26,7 @@
 #include "sdlbackend/SDLBackend.h"
 #include "sdlbackend/SDLMixerBackend.h"
 #include "version.h"
+#include "openc2eimgui/Updater.h"
 
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_messagebox.h>
@@ -239,6 +240,7 @@ int main(int argc, char* argv[]) {
 	// the C library aborted, and the crash report deadlocked in the abort
 	// (Home never closed). Test runs (--no-autosave) still shut down fully.
 	if (engine.saveForQuit()) {
+		Openc2eImgui::UpdaterAtExit(); // (a downloaded update, once the world is saved)
 		fflush(stdout);
 		fflush(stderr);
 		std::_Exit(0);
@@ -246,6 +248,7 @@ int main(int argc, char* argv[]) {
 
 	// we're done, be sure to shut stuff down
 	engine.shutdown();
+	Openc2eImgui::UpdaterAtExit();
 
 	return 0;
 }

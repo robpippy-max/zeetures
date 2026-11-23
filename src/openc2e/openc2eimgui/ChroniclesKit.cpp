@@ -88,7 +88,7 @@ std::string sentence(const monikerData& self, const storyEntry& e) {
 		case storyEntry::unconscious:
 			return "Fell unconscious (out of energy).";
 		case storyEntry::cameRound:
-			return "Came round.";
+			return e.detail == "revived" ? "Was brought back to life." : "Came round.";
 	}
 	return "";
 }

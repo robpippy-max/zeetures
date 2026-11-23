@@ -113,6 +113,9 @@ class oldCreature : public Creature {
 
 	// TODO: is it really worth having drives outside oldCreature?
 	virtual unsigned char getDrive(unsigned int id) = 0;
+	bool resistsleep = false; // the mind fights off the falling-asleep reflex (MindOutput)
+	bool sleepseen = false; // (OPENC2E_WATCH_SLEEP)
+	unsigned int sleepseenat = 0;
 
 	void handleStimulus(unsigned int id);
 	void handleStimulus(const StimulusEvent& s);
@@ -149,6 +152,29 @@ class oldCreature : public Creature {
 	// (engine.wordlist), how familiar it is, 0-255 (known at WORD_KNOWN); see
 	// CreatureSpeech.h. Empty until the first word is heard.
 	std::vector<unsigned char> vocab;
+	// Names of its own for kinds of thing, outside the game's word list
+	// ("mummy" for the hand): for each word, how familiar it is as the name
+	// of each category (0-255, known at WORD_KNOWN); learned from the hand
+	// (answerHand) and from other creatures (hearOwnNames), saved with it
+	std::map<std::string, std::map<int, int>> ownNames;
+	std::string namingWord; // the last name the hand was teaching it
+	int namingCategory = -1; // and for what
+	unsigned int namingTick = 0, touchedTick = 0; // when, and when the hand last touched it
+	std::string replyName; // a name it will say back (else replyWord)
+	// what the hand last said to it (answerHand, CreatureSpeech.cpp): the
+	// verb (0-13) and the thing (a category) it knows the words for, -1 none
+	struct Spoken {
+		int verb = -1, noun = -1;
+		bool named = false; // by its name
+		unsigned int tick = 0; // world ticks (0: never)
+	} spoken;
+	// something it was called to look at, or has just been touched by: a
+	// category, and when
+	int calledCategory = -1;
+	unsigned int calledTick = 0;
+	void callTo(int category);
+	int replyWord = -1; // what it will say back (-1: something of its own)
+	unsigned int replyAt = 0; // and when (0: nothing)
 	// what it feels about each creature it has met, by moniker
 	// (creatures/Relationships.h); saved with the world
 	std::map<std::string, Bond> bonds;
@@ -372,10 +398,22 @@ class c2Creature : public oldCreature {
 	// stock genome has one). Read from the genome once.
 	int waterbreather = -1;
 	unsigned int noEnergyTicks = 0, recoveringTicks = 0; // (updateConsciousness)
+	bool kickstartPrimed = false; // (kickstart)
 	void updateConsciousness();
 
   public:
 	void setUnconscious(bool u) override; // faints now, or brings round (UNCS)
+
+	// Bringing back the newly dead (the Science Kit's Syringe; owner,
+	// 2026-11-22: its kick-starting mixtures did nothing). How far it has got:
+	// alive; can't (died of old age, or its body is floating away or gone);
+	// dead (and may yet come back); primed (its stores are filled: the
+	// Metabolism Transplant); revived (by the Defibrillant, once primed).
+	enum Kickstart { notDead, tooLate, stillDead, primed, revived };
+	Kickstart kickstartState();
+	// after a mixture's chemicals were put into a dead body: `energy` and
+	// `atp` how much Energy (98) and ATP (99) were in it
+	Kickstart kickstart(int energy, int atp);
 
   protected:
 

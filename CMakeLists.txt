@@ -386,6 +386,7 @@ add_library(openc2e_core OBJECT
 	src/openc2e/SFCFile.cpp
 	src/openc2e/SimpleAgent.cpp
 	src/openc2e/creatures/SkeletalCreature.cpp
+	src/openc2e/creatures/SmoothMovement.cpp
 	src/openc2e/Sound.cpp
 	src/openc2e/SoundManager.cpp
 	src/openc2e/Vehicle.cpp
@@ -409,6 +410,7 @@ add_library(openc2e_core OBJECT
 	src/openc2e/openc2eimgui/MindKit.cpp
 	src/openc2e/openc2eimgui/EcologyKit.cpp
 	src/openc2e/openc2eimgui/HelpWindow.cpp
+	src/openc2e/openc2eimgui/Updater.cpp
 	src/openc2e/openc2eimgui/ScienceKit.cpp
 	src/openc2e/openc2eimgui/C2ScrollBars.cpp
 	src/openc2e/openc2eimgui/C2StatusBar.cpp
@@ -514,6 +516,7 @@ set(EMBEDDED_FILES
 	${SRC}/data/hatchery/nests.png
 	${SRC}/data/hatchery/nests.txt
 	${SRC}/data/thoughts/icons.png
+	${SRC}/data/help/help-topics.md
 	${SRC}/CITATIONS.md)
 add_custom_command(
 	OUTPUT ${GEN}/embedded_files.cpp

@@ -75,11 +75,50 @@ class SkeletalCreature : public Agent, public CreatureAgent {
 	int drawnwidth = 50, drawnheight = 100;
 	int partx[17], party[17];
 
+	// Smooth movement (SmoothMovement.cpp): drawn between poses. C2 only, and
+	// drawing only: pose[], partx[] and the rest are the creature's as before.
+	struct Glide {
+		bool have = false; // `to` and `dir` are its latest pose
+		bool pending = false; // between begin and end of a pose change
+		float from[14] = {}; // each part's pose as drawn when the change began
+		unsigned int to[14] = {}, dir = 0;
+		float start = 0, length = 0; // in world ticks (length 0: not gliding)
+		unsigned int changed = 0; // the tick of the latest change
+		int foot = 11; // the foot that stood on the ground
+		float footx = 0, footy = 0; // and where it was drawn
+		bool settled = true; // off is known
+		float offx = 0, offy = 0; // how far that foot was drawn from where it is now
+		float evenFrom = 0, evenTo = 0; // how far across it is drawn to even out its walk
+		float originx = 0, originy = 0; // the creature's x and y as drawn when the change began
+	} glide;
+	// its walk's cycle: how far to draw the body, at each pose, from where
+	// the pose puts it, for an even speed
+	struct WalkCycle {
+		creatureGaitGene* gene = nullptr;
+		unsigned int dir = 0;
+		int size = 0;
+		float even[8] = {};
+	} walkCycle;
+	float evenWalk();
+	float evenNow() const;
+	void glideBegin(); // the pose has changed, the skeleton has not yet
+	void glideEnd(); // the skeleton is the new pose's
+	void glideSettle(); // the change's other effects (the foot snapped to its floor) are done
+	float glideShare() const; // how far through it is, 0-1 (1: not gliding)
+	void attachmentBetween(int part, int id, float p, float& ox, float& oy) const;
+	float turnBetween(int part, float p, int& frame) const;
+	bool drawnSkeleton(float poses[14], float jx[14], float jy[14], float& bx, float& by) const;
+	bool renderGliding(class RenderTarget* renderer, int xoffset, int yoffset);
+
 	std::string dataString(unsigned int _stage, bool sprite, unsigned int dataspecies, unsigned int databreed);
 
 	unsigned int gaiti = 0; // (was left unset: a fresh or loaded creature read its gait gene past its 8 poses once)
 	float paceCredit = 0; // C2: walking pace by life stage (stagePace)
+	int approachUnid = -1, approachTurns = 0; // approaching: what, and how often it has turned back for it lately
+	unsigned int approachTurnedAt = 0;
 	static float stagePace(int stage);
+	float nextStepIn = 0; // while a walk's step is taken: ticks until its next (0: not a step)
+	bool walkSteps(float share);
 	void stepTiredness();
 	creatureGaitGene* gaitgene;
 
@@ -103,6 +142,16 @@ class SkeletalCreature : public Agent, public CreatureAgent {
 	virtual ~SkeletalCreature();
 
 	void render(RenderTarget* renderer, int xoffset, int yoffset);
+	// smooth movement: on or off (View menu; off in C1 and C3)
+	static bool smoothMovement();
+	static void setSmoothMovement(bool on);
+	// how far it is drawn now from where it is: its corner (what floats on
+	// it), its head, the thing it carries; false: where it is
+	bool drawnShift(float& dx, float& dy) const;
+	bool drawnHeadShift(float& dx, float& dy) const;
+	bool drawnCarryShift(float& dx, float& dy) const;
+	// its neck as drawn, in the world, for a camera that follows it
+	bool drawnNeck(float& nx, float& ny) const;
 	virtual int handleClick(float, float);
 	int partUnder(float wx, float wy); // the body part drawn at a world point, or -1
 	static bool bodyOrLeg(int part); // the body, a thigh, shin or foot (spank, push)
@@ -119,6 +168,7 @@ class SkeletalCreature : public Agent, public CreatureAgent {
 		int blinkticks, oldfootx, oldfooty, lastgoodfootx, lastgoodfooty;
 		int width, height, adjustx, adjusty, partx[17], party[17];
 		float x, y;
+		Glide glide;
 	};
 	PoseMemo memoPose() const;
 	void restorePose(const PoseMemo& m);

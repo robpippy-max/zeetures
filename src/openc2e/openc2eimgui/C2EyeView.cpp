@@ -24,6 +24,7 @@
 #include <cmath>
 #include <fmt/format.h>
 #include <imgui.h>
+#include <map>
 #include <memory>
 
 namespace Openc2eImgui {
@@ -107,6 +108,28 @@ static std::string describe(Agent* a) {
 		if (noun.rfind("kind ", 0) != 0) {
 			for (char& ch : noun)
 				ch = (char)tolower((unsigned char)ch);
+			// the words that make no sense with "a" before them ("dropping
+			// a nature", as a player saw; 2026-11-22)
+			static const std::map<std::string, const char*> phrases = {
+				{"me", "itself"},
+				{"hand", "the hand"},
+				{"nature", "something growing wild"},
+				{"food", "some food"},
+				{"drink", "something to drink"},
+				{"dispensor", "a dispenser"},
+				{"implement", "a tool"},
+				{"detritus", "some litter"},
+				{"medicine", "some medicine"},
+				{"weather", "the weather"},
+				{"badplant", "a harmful plant"},
+				{"badbug", "a harmful bug"},
+				{"badcritter", "a harmful critter"},
+				{"mover", "a vehicle"},
+				{"mediabox", "a media box"},
+				{"leftright", "a sign"},
+			};
+			if (auto it = phrases.find(noun); it != phrases.end())
+				return it->second;
 			return fmt::format("{} {}", std::string("aeiou").find(noun[0]) != std::string::npos ? "an" : "a", noun);
 		}
 	}
@@ -127,7 +150,11 @@ std::string DescribeCreatureActivity(Agent* self) {
 		focus = nullptr;
 	if (!focus)
 		return "Not paying attention to anything";
-	std::string s = fmt::format("{} {}", actionWords(cr->getDecisionId()), describe(focus));
+	std::string s;
+	if (cr->getDecisionId() == 7) // (drop: what it holds, whatever it is looking at)
+		s = self->carrying ? fmt::format("putting down {}", describe(self->carrying.get())) : fmt::format("looking at {}", describe(focus));
+	else
+		s = fmt::format("{} {}", actionWords(cr->getDecisionId()), describe(focus));
 	if (!s.empty())
 		s[0] = (char)toupper((unsigned char)s[0]);
 	return s;

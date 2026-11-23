@@ -1320,7 +1320,14 @@ void c_NEW_CREA_c1(caosVM* vm) {
 	}
 
 	a->setCreature(c);
-	a->finishInit();
+	try {
+		a->finishInit();
+	} catch (...) {
+		// (no body could be made for it: never left half made in the world,
+		// where its next step crashed the game)
+		a->kill();
+		throw;
+	}
 	// its seasonal rhythm, if one was passed on with this genome (MATE)
 	{
 		float z;

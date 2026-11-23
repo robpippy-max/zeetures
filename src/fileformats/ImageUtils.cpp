@@ -254,6 +254,79 @@ Image Scale(const Image& src, float k) {
 	return out;
 }
 
+Image Turn(const Image& src, int cx, int cy, float angle, int& radius) {
+	const int dx = std::max(cx, src.width - 1 - cx), dy = std::max(cy, src.height - 1 - cy);
+	const int R = (int)std::ceil(std::hypot((float)dx, (float)dy)) + 1;
+	radius = R;
+	const int side = 2 * R + 1;
+	const int bpp = src.format == if_index8 ? 1 : src.format == if_rgba32 ? 4 : (src.format == if_bgr24 || src.format == if_rgb24) ? 3 : 2;
+	Image out = src;
+	out.width = out.height = side;
+	out.data = shared_array<uint8_t>((size_t)side * side * bpp);
+	std::memset(out.data.data(), 0, (size_t)side * side * bpp);
+	const uint8_t* in = src.data.data();
+	const bool sixteen = src.format == if_rgb565 || src.format == if_rgb555;
+	const bool rgba = src.format == if_rgba32;
+	const int N = sixteen || rgba ? 4 : 1; // samples per side of each new pixel (others: nearest)
+	const float c = std::cos(angle), s = std::sin(angle);
+	for (int oy = 0; oy < side; oy++) {
+		for (int ox = 0; ox < side; ox++) {
+			uint8_t* dst = out.data.data() + ((size_t)oy * side + ox) * bpp;
+			int count = 0;
+			unsigned int sr = 0, sg = 0, sb = 0;
+			for (int sy = 0; sy < N; sy++) {
+				for (int sx = 0; sx < N; sx++) {
+					// the sample, from the pivot pixel's middle, turned back
+					const float u = ox + (sx + 0.5f) / N - R - 0.5f, v = oy + (sy + 0.5f) / N - R - 0.5f;
+					const int px = (int)std::floor(c * u + s * v + cx + 0.5f), py = (int)std::floor(-s * u + c * v + cy + 0.5f);
+					if (px < 0 || py < 0 || px >= src.width || py >= src.height)
+						continue;
+					const uint8_t* q = in + ((size_t)py * src.width + px) * bpp;
+					if (sixteen) {
+						uint16_t w;
+						std::memcpy(&w, q, 2);
+						if (w == 0)
+							continue; // transparent
+						if (src.format == if_rgb565) {
+							sr += ((w >> 11) & 31) * 255 / 31;
+							sg += ((w >> 5) & 63) * 255 / 63;
+						} else {
+							sr += ((w >> 10) & 31) * 255 / 31;
+							sg += ((w >> 5) & 31) * 255 / 31;
+						}
+						sb += (w & 31) * 255 / 31;
+					} else if (rgba) {
+						if (q[3] < 128)
+							continue;
+						sr += q[0];
+						sg += q[1];
+						sb += q[2];
+					} else {
+						std::memcpy(dst, q, bpp);
+					}
+					count++;
+				}
+			}
+			if ((!sixteen && !rgba) || count * 2 < N * N)
+				continue;
+			const unsigned int r = sr / count, g = sg / count, b = sb / count;
+			if (sixteen) {
+				uint16_t w = src.format == if_rgb565 ? (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3))
+													 : (uint16_t)(((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3));
+				if (w == 0)
+					w = 1 << 5; // opaque black must not turn transparent
+				std::memcpy(dst, &w, 2);
+			} else {
+				dst[0] = (uint8_t)r;
+				dst[1] = (uint8_t)g;
+				dst[2] = (uint8_t)b;
+				dst[3] = 255;
+			}
+		}
+	}
+	return out;
+}
+
 Image Tint(const Image& oldimage, unsigned char r, unsigned char g, unsigned char b,
 	unsigned char rotation, unsigned char swap) {
 	if (!(oldimage.format == if_rgb565 || oldimage.format == if_rgb555)) {

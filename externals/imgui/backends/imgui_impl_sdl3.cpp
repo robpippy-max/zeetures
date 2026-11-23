@@ -150,11 +150,18 @@ static void ImGui_ImplSDL3_PlatformSetImeData(ImGuiContext*, ImGuiViewport* view
     }
     if (data->WantVisible)
     {
+        // (openc2e: from render coordinates to the window's own)
+        float x0 = data->InputPos.x, y0 = data->InputPos.y, x1 = x0 + 1, y1 = y0 + data->InputLineHeight;
+        if (bd->Renderer)
+        {
+            SDL_RenderCoordinatesToWindow(bd->Renderer, x0, y0, &x0, &y0);
+            SDL_RenderCoordinatesToWindow(bd->Renderer, x1, y1, &x1, &y1);
+        }
         SDL_Rect r;
-        r.x = (int)data->InputPos.x;
-        r.y = (int)data->InputPos.y;
-        r.w = 1;
-        r.h = (int)data->InputLineHeight;
+        r.x = (int)x0;
+        r.y = (int)y0;
+        r.w = (int)(x1 - x0);
+        r.h = (int)(y1 - y0);
         SDL_SetTextInputArea(window, &r, 0);
         SDL_StartTextInput(window);
         bd->ImeWindow = window;
@@ -591,7 +598,11 @@ static void ImGui_ImplSDL3_UpdateMouseData()
             int window_x, window_y;
             SDL_GetGlobalMouseState(&mouse_x_global, &mouse_y_global);
             SDL_GetWindowPosition(focused_window, &window_x, &window_y);
-            io.AddMousePosEvent(mouse_x_global - window_x, mouse_y_global - window_y);
+            float mouse_x = mouse_x_global - window_x, mouse_y = mouse_y_global - window_y;
+            // (openc2e: in render coordinates, as the mouse events are)
+            if (bd->Renderer)
+                SDL_RenderCoordinatesFromWindow(bd->Renderer, mouse_x, mouse_y, &mouse_x, &mouse_y);
+            io.AddMousePosEvent(mouse_x, mouse_y);
         }
     }
 }
@@ -744,6 +755,20 @@ void ImGui_ImplSDL3_NewFrame()
     io.DisplaySize = ImVec2((float)w, (float)h);
     if (w > 0 && h > 0)
         io.DisplayFramebufferScale = ImVec2((float)display_w / w, (float)display_h / h);
+    // (openc2e: laid out in render coordinates, the window's pixels over the
+    // renderer's scale. On Windows and X11 a window's own coordinates are
+    // pixels whatever the desktop's scaling, so the interface was laid out
+    // for the whole window, then drawn larger: half of it was off the window
+    // and the mouse missed what it pointed at.)
+    if (bd->Renderer && w > 0 && h > 0)
+    {
+        float dw = 0, dh = 0;
+        if (SDL_RenderCoordinatesFromWindow(bd->Renderer, (float)w, (float)h, &dw, &dh) && dw > 0 && dh > 0)
+        {
+            io.DisplaySize = ImVec2(dw, dh);
+            io.DisplayFramebufferScale = ImVec2(display_w / dw, display_h / dh);
+        }
+    }
 
     // Setup time step (we don't use SDL_GetTicks() because it is using millisecond resolution)
     // (Accept SDL_GetPerformanceCounter() not returning a monotonically increasing value. Happens in VMs and Emscripten, see #6189, #6114, #3644)

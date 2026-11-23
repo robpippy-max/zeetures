@@ -3,6 +3,7 @@
 
 #include "Engine.h"
 #include "PathResolver.h"
+#include "creatures/CreatureSpeech.h"
 #include "common/Ascii.h"
 #include "common/backend/Backend.h"
 #include "common/backend/BackendEvent.h"
@@ -132,6 +133,20 @@ bool CreateWorld(const std::string& name, const fs::path& tmpl, std::string& err
 	return true;
 }
 
+bool CopyWorldExtras(const fs::path& from, const fs::path& to, std::string& error) {
+	for (const char* name : {"photos", "departed", "Additions"}) {
+		std::error_code ec;
+		if (!fs::is_directory(from / name, ec))
+			continue;
+		fs::copy(from / name, to / name, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+		if (ec) {
+			error = fmt::format("Couldn't copy the world's {} folder: {}", name, ec.message());
+			return false;
+		}
+	}
+	return true;
+}
+
 // The command line to start this program again in the named world: the same
 // options, with --world NAME in place of any --world given before.
 static std::vector<std::string> RelaunchArgs(const std::string& name) {
@@ -216,6 +231,9 @@ std::string DrawNewWorldForm(bool reset) {
 	static int s_template = 0;
 	static std::string s_error;
 	static std::vector<fs::path> s_templates;
+	static bool s_focus = false;
+	if (reset)
+		s_focus = true;
 	if (reset || s_templates.empty()) {
 		s_templates = ListWorldTemplates();
 		s_template = 0;
@@ -228,6 +246,9 @@ std::string DrawNewWorldForm(bool reset) {
 
 	ImGui::Text("World name:");
 	ImGui::SetNextItemWidth(260);
+	if (ImGui::IsWindowAppearing() || s_focus)
+		ImGui::SetKeyboardFocusHere(); // (ready to type the name)
+	s_focus = false;
 	bool enter = ImGui::InputText("##worldname", s_name, sizeof(s_name), ImGuiInputTextFlags_EnterReturnsTrue);
 	ImGui::Text("Start from:");
 	ImGui::SetNextItemWidth(260);
@@ -254,10 +275,51 @@ std::string DrawNewWorldForm(bool reset) {
 	return "";
 }
 
+// (a setting is one word, and a world's name may have spaces: kept as slashes,
+// which no name has)
+static std::string worldSetting(const std::string& key) {
+	std::string v = readPlayerSetting(key);
+	std::replace(v.begin(), v.end(), '/', ' ');
+	return v;
+}
+
+static void setWorldSetting(const std::string& key, std::string name) {
+	std::replace(name.begin(), name.end(), ' ', '/');
+	writePlayerSetting(key, name);
+}
+
+std::string DefaultWorld() {
+	return worldSetting("default-world");
+}
+
+void SetDefaultWorld(const std::string& name) {
+	setWorldSetting("default-world", name);
+}
+
+// The world opened without asking, if the player has chosen one (the
+// chooser's checkbox, File > Open This World at Launch; a player's wish
+// passed on by the owner, 2026-11-22). While it opens, a setting says so: if
+// that start never finished, the next one shows the chooser, so a world that
+// will not open can be got away from.
+void DefaultWorldOpened() {
+	if (!readPlayerSetting("default-world-opening").empty())
+		writePlayerSetting("default-world-opening", "");
+}
+
 std::string RunWorldChooser() {
 	std::string chosen;
 	bool quit = false;
 	bool creating = ListWorlds().empty();
+	std::string byDefault = DefaultWorld();
+	if (!byDefault.empty() && !FindWorld(byDefault))
+		byDefault.clear(); // (renamed or deleted since)
+	const bool failed = !byDefault.empty() && worldSetting("default-world-opening") == byDefault;
+	if (!byDefault.empty() && !failed) {
+		setWorldSetting("default-world-opening", byDefault);
+		return byDefault;
+	}
+	DefaultWorldOpened();
+	bool always = failed; // (kept ticked, not lost)
 	DrawNewWorldForm(true);
 
 	get_backend()->run([&] {
@@ -271,12 +333,23 @@ std::string RunWorldChooser() {
 		get_backend()->getMainRenderTarget()->renderClear();
 
 		ImGuiIO& io = ImGui::GetIO();
+		ImGui::SetNextFrameWantCaptureMouse(true); // (the pointer shows everywhere: there is no hand yet)
 		ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x / 2, io.DisplaySize.y / 2), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 		ImGui::SetNextWindowSize(ImVec2(360, 0));
 		ImGui::Begin("Choose a World", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
 		static int s_selected = 0;
 		auto worlds = ListWorlds();
+		if (static bool first = true; first) {
+			first = false;
+			for (int i = 0; i < (int)worlds.size(); i++)
+				if (worlds[i].name == byDefault)
+					s_selected = i;
+		}
 		if (!creating && !worlds.empty()) {
+			if (failed) {
+				ImGui::TextWrapped("%s was not opened by itself this time, as Zeetures closed while opening it the last time.", byDefault.c_str());
+				ImGui::Spacing();
+			}
 			ImGui::Text("Your worlds:");
 			if (ImGui::BeginListBox("##worlds", ImVec2(-1, 160))) {
 				for (int i = 0; i < (int)worlds.size(); i++) {
@@ -289,6 +362,9 @@ std::string RunWorldChooser() {
 				ImGui::EndListBox();
 			}
 			s_selected = std::clamp(s_selected, 0, (int)worlds.size() - 1);
+			ImGui::Checkbox("Always open this world at launch", &always);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Skips this window from now on.\nFile > Open This World at Launch turns it off again.");
 			if (ImGui::Button("Open"))
 				chosen = worlds[s_selected].name;
 			ImGui::SameLine();
@@ -316,7 +392,14 @@ std::string RunWorldChooser() {
 		return chosen.empty() && !quit;
 	});
 
-	return quit ? "" : chosen;
+	if (quit)
+		return "";
+	if (always) {
+		SetDefaultWorld(chosen);
+		setWorldSetting("default-world-opening", chosen);
+	} else if (!DefaultWorld().empty())
+		SetDefaultWorld("");
+	return chosen;
 }
 
 } // namespace Openc2eImgui

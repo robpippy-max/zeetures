@@ -25,6 +25,7 @@
 #include "PathResolver.h"
 #include "VoiceData.h"
 #include "World.h"
+#include "PointerAgent.h"
 #include "historyManager.h"
 #include "common/Random.h"
 #include "creatures/CreatureAgent.h"
@@ -38,6 +39,7 @@
 #include <fmt/core.h>
 #include <fstream>
 #include <map>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -99,10 +101,13 @@ std::string fallbackNative(const std::string& word) {
 	return out;
 }
 
-// the word as the creature's bubble shows it: the learned word, or its own
-// tongue's
+// the word as the creature's bubble shows it: its own name for the thing
+// (ownNames), the learned word, or its own tongue's
 std::string showWord(Agent* creature, oldCreature* c, int w) {
 	std::string word = isWord(w) ? trim(engine.wordlist[w]) : std::string();
+	if (w >= 16 && w < 56)
+		if (std::string own = ownNameFor(c, w - 16); !own.empty())
+			return own;
 	if (knowsWord(c, w))
 		return word;
 	return nativeWord(creature, word);
@@ -285,6 +290,72 @@ void hearWord(oldCreature* c, int word, int amount) {
 	}
 }
 
+int ownNameMeans(oldCreature* c, const std::string& word) {
+	if (!c)
+		return -1;
+	auto it = c->ownNames.find(word);
+	if (it == c->ownNames.end())
+		return -1;
+	int best = -1, most = WORD_KNOWN - 1;
+	for (auto& [category, v] : it->second)
+		if (v > most)
+			most = v, best = category;
+	return best;
+}
+
+std::string ownNameFor(oldCreature* c, int category) {
+	std::string best;
+	int most = WORD_KNOWN - 1;
+	if (c)
+		for (auto& [word, for_] : c->ownNames)
+			if (auto it = for_.find(category); it != for_.end() && it->second > most && ownNameMeans(c, word) == category)
+				most = it->second, best = word;
+	return best;
+}
+
+void hearOwnName(oldCreature* c, const std::string& word, int category, int amount) {
+	const size_t mostNames = 40;
+	if (!c || word.empty() || category < 1 || category > 35 || !c->isAlive() || c->isAsleep())
+		return;
+	bool knew = ownNameMeans(c, word) == category;
+	int more = (int)std::lround(amount * stageLearning((int)c->getStage()));
+	int& v = c->ownNames[word][category];
+	v = std::min(255, v + more);
+	// a word comes to mean the one thing, and a thing to have the one name:
+	// what it meant before, and the thing's other names, grow fainter
+	for (auto& [w, for_] : c->ownNames)
+		for (auto& [cat, other] : for_)
+			if ((w == word) != (cat == category))
+				other = std::max(0, other - more / 2);
+	if (c->ownNames.size() > mostNames) {
+		auto least = c->ownNames.end();
+		int fewest = 1 << 30;
+		for (auto it = c->ownNames.begin(); it != c->ownNames.end(); ++it) {
+			int most = 0;
+			for (auto& [cat, n] : it->second)
+				most = std::max(most, n);
+			if (it->first != word && most < fewest)
+				fewest = most, least = it;
+		}
+		if (least != c->ownNames.end())
+			c->ownNames.erase(least);
+	}
+	if (!knew && ownNameMeans(c, word) == category) {
+		if (wordsKnown(c) == 0 && ownNamesKnown(c) == 1)
+			world.history->tell(world.history->findMoniker(c->getGenome()), storyEntry::firstWord, "", word);
+		if (watching())
+			fmt::print("* LEARNS the name \"{}\" for category {}\n", word, category);
+	}
+}
+
+int ownNamesKnown(oldCreature* c) {
+	int n = 0;
+	if (c)
+		for (auto& [word, for_] : c->ownNames)
+			n += ownNameMeans(c, word) >= 0;
+	return n;
+}
+
 void learnAllWords(oldCreature* c) {
 	if (!c)
 		return;
@@ -401,8 +472,11 @@ Utterance phraseFor(const std::string& meaning, Agent* creature, oldCreature* c)
 			if (shown.empty())
 				continue;
 			u.shown += (u.shown.empty() ? "" : " ") + shown;
-			u.spoken += (u.spoken.empty() ? "" : " ") + trim(engine.wordlist[w]);
-			if (knowsWord(c, w))
+			std::string own = w >= 16 && w < 56 ? ownNameFor(c, w - 16) : std::string();
+			u.spoken += (u.spoken.empty() ? "" : " ") + (own.empty() ? trim(engine.wordlist[w]) : own);
+			if (!own.empty())
+				u.own.push_back({own, w - 16});
+			else if (knowsWord(c, w))
 				u.learned.push_back(w);
 		}
 		if (!u.shown.empty())
@@ -487,6 +561,15 @@ Utterance phraseFor(const std::string& meaning, Agent* creature, oldCreature* c)
 		for (size_t w = 0; w < c->vocab.size(); w++)
 			if (knowsWord(c, (int)w) && isWord((int)w))
 				known.push_back((int)w);
+		// or a name of its own for a thing (so names pass on)
+		std::vector<int> named;
+		for (int category = 1; category <= 35; category++)
+			if (!ownNameFor(c, category).empty() && isWord(16 + category))
+				named.push_back(16 + category);
+		if (!named.empty() && rand_float(0, 1) < 0.25f) {
+			say({named[rand_size_t(0, named.size() - 1)]}, "?");
+			return u;
+		}
 		if (!known.empty() && rand_float(0, 1) < 0.35f) {
 			say({known[rand_size_t(0, known.size() - 1)]}, "?");
 			return u;
@@ -568,6 +651,209 @@ void handSays(const std::string& text) {
 	b->setTimeout(35);
 	hearSpeech(hand, text, HEAR_HAND);
 	recordSpeech(hand, text);
+	answerHand(text);
+}
+
+void handSaysAgain() {
+	for (auto& line : s_history)
+		if (line.speaker && line.speaker.get() == (Agent*)world.hand()) {
+			std::string text = line.text;
+			handSays(text);
+			return;
+		}
+}
+
+// Being spoken to (a player, 2026-11-22: "the baby not looking at me, and
+// there being no response to anything I say"; C2's manual has norns look,
+// repeat and obey). Words are learned in hearWords, before this.
+void answerHand(const std::string& text) {
+	Agent* hand = (Agent*)world.hand();
+	if (!hand || engine.version != 2 || engine.wordlist.empty())
+		return;
+	std::string t = " ";
+	for (char ch : lower(text))
+		t += std::isalnum((unsigned char)ch) || (unsigned char)ch >= 128 ? ch : ' ';
+	t += " ";
+	// the list's words in it, in the order said
+	std::vector<std::pair<size_t, int>> said;
+	for (size_t w = 0; w < engine.wordlist.size(); w++) {
+		std::string word = lower(trim(engine.wordlist[w]));
+		if (word.empty())
+			continue;
+		if (size_t at = t.find(" " + word + " "); at != std::string::npos)
+			said.push_back({at, (int)w});
+	}
+	std::sort(said.begin(), said.end());
+	// the words of it, and a name it may be teaching: the one word of at
+	// least two letters that is no word of the list, no creature's name and
+	// no everyday filler
+	std::vector<std::string> tokens;
+	{
+		std::istringstream in(t);
+		for (std::string w; in >> w;)
+			tokens.push_back(w);
+	}
+	auto listed = [&](const std::string& w) {
+		for (auto& l : engine.wordlist)
+			if (lower(trim(l)) == w)
+				return true;
+		return false;
+	};
+	std::set<std::string> creatureNames;
+	for (auto& a : world.agents)
+		if (oldCreature* c = a && a->family == 4 ? creatureOf(a.get()) : nullptr) {
+			std::string mon = world.history->findMoniker(c->getGenome());
+			if (!mon.empty() && world.history->hasMoniker(mon)) {
+				std::istringstream in(lower(world.history->getMoniker(mon).name));
+				for (std::string w; in >> w;)
+					creatureNames.insert(w);
+			}
+		}
+	static const std::set<std::string> filler = {"hello", "hi", "hey", "good", "bad", "please", "thanks", "thank", "the", "an", "is", "it", "its",
+		"this", "that", "my", "you", "your", "and", "to", "for", "of", "in", "on", "at", "am", "are", "do", "dont", "not", "ok", "okay", "norn", "norns"};
+	std::string naming;
+	int strange = 0;
+	for (auto& w : tokens)
+		if (w.size() >= 2 && std::isalpha((unsigned char)w[0]) && !listed(w) && !creatureNames.count(w) && !filler.count(w)) {
+			naming = w;
+			strange++;
+		}
+	if (strange != 1)
+		naming.clear();
+
+	struct Listener {
+		Agent* a;
+		oldCreature* c;
+		float distance;
+		bool named;
+	};
+	std::vector<Listener> all, named;
+	const float hx = centreX(hand), hy = centreY(hand);
+	for (auto& a : world.agents) {
+		if (!a || a->isDying())
+			continue;
+		oldCreature* c = creatureOf(a.get());
+		if (!c || !c->isAlive() || c->isAsleep() || c->isUnconscious() || !inEarshot(a.get(), hx, hy))
+			continue;
+		Listener l{a.get(), c, std::hypot(centreX(a.get()) - hx, centreY(a.get()) - hy), false};
+		std::string mon = world.history->findMoniker(c->getGenome());
+		std::string name = mon.empty() || !world.history->hasMoniker(mon) ? std::string() : lower(trim(world.history->getMoniker(mon).name));
+		if (name.size() >= 2 && t.find(" " + name + " ") != std::string::npos) {
+			l.named = true;
+			named.push_back(l);
+		}
+		all.push_back(l);
+	}
+	// spoken to by name: only they are meant
+	std::vector<Listener>& meant = named.empty() ? all : named;
+	std::sort(meant.begin(), meant.end(), [](const Listener& a, const Listener& b) { return a.distance < b.distance; });
+	// what the hand is showing: what it holds, or points at
+	// (the smallest thing there: creatures in front, and scenery, don't count)
+	Agent* shown = hand->carrying.get();
+	if (!shown) {
+		const float px = world.hand()->pointerX(), py = world.hand()->pointerY();
+		float least = 1e9f;
+		for (auto& a : world.agents) {
+			if (!a || a->isDying() || a->category < 2 || a->category > 35 || a->invisible() || a->carriedby || !a->part(0))
+				continue;
+			const float w = a->getWidth(), h = a->getHeight();
+			if (px >= a->x - 10 && px <= a->x + w + 10 && py >= a->y - 10 && py <= a->y + h + 10 && w * h < least)
+				least = w * h, shown = a.get();
+		}
+	}
+	const int shownCategory = shown && shown != hand && shown->category >= 2 && shown->category <= 35 ? shown->category : -1;
+	int rank = 0;
+	for (auto& l : meant) {
+		oldCreature::Spoken s;
+		int named = -1; // the thing it takes a strange name to be for
+		// names of its own it knows
+		for (auto& w : tokens)
+			if (int own = ownNameMeans(l.c, w); own >= 0)
+				s.noun = own;
+		if (!naming.empty()) {
+			const unsigned int now = world.tickcount;
+			auto lately = [&](unsigned int then, unsigned int within) { return then != 0 && now >= then && now - then < within; };
+			if (ownNameMeans(l.c, naming) >= 0 && shownCategory < 0 && !lately(l.c->touchedTick, 100))
+				named = -1; // (known, and nothing new shown: simply understood)
+			else if (l.c->namingWord == naming && lately(l.c->namingTick, 150))
+				named = l.c->namingCategory; // the same again
+			else if (lately(l.c->touchedTick, 100))
+				named = 1; // just touched by the hand: the hand
+			else if (shownCategory >= 0)
+				named = shownCategory;
+			else if (Agent* it = l.c->getAttentionFocus().get(); it && it->category >= 2 && it->category <= 35 && std::hypot(centreX(it) - hx, centreY(it) - hy) < 90)
+				named = it->category; // what it is looking at, the hand beside it
+			else
+				named = 1;
+			if (named >= 0) {
+				hearOwnName(l.c, naming, named, HEAR_HAND);
+				l.c->namingWord = naming;
+				l.c->namingCategory = named;
+				l.c->namingTick = std::max(1u, now);
+				s.noun = named;
+			}
+		}
+		for (auto& [at, w] : said) {
+			if (!knowsWord(l.c, w))
+				continue;
+			if (w <= 13)
+				s.verb = w;
+			else if (w >= 16 && w < 16 + 40)
+				s.noun = w - 16; // the noun's category
+		}
+		s.named = l.named;
+		s.tick = world.tickcount;
+		l.c->spoken = s;
+		l.c->callTo(s.noun >= 0 ? s.noun : 1); // the thing, or the hand
+		// the nearest two (or those named) say it back
+		if (rank < 2 || l.named) {
+			l.c->replyWord = said.empty() ? -1 : said.back().second;
+			// (a name it is being taught, or one of its own, over the rest)
+			l.c->replyName = naming;
+			if (naming.empty())
+				for (auto& w : tokens)
+					if (ownNameMeans(l.c, w) >= 0)
+						l.c->replyName = w;
+			l.c->replyAt = world.tickcount + 8 + 9 * rank + rand_int32(0, 5);
+		}
+		rank++;
+	}
+	if (watching())
+		fmt::print("* HAND SAYS \"{}\": {} listening{}\n", text, meant.size(), named.empty() ? "" : " (named)");
+}
+
+void tickReply(Agent* creature, oldCreature* c) {
+	if (c->replyAt == 0 || world.tickcount < c->replyAt)
+		return;
+	c->replyAt = 0;
+	if (!c->isAlive() || c->isAsleep() || c->isUnconscious())
+		return;
+	int stage = (int)c->getStage();
+	if (!c->replyName.empty()) {
+		Utterance u;
+		u.spoken = c->replyName;
+		int category = ownNameMeans(c, c->replyName);
+		bool knows = stage > 0 && category >= 0;
+		u.shown = knows ? u.spoken : nativeWord(creature, u.spoken);
+		if (knows)
+			u.own.push_back({c->replyName, category});
+		c->replyName.clear();
+		creatureSays(creature, stage, u);
+		return;
+	}
+	if (c->replyWord < 0 || !isWord(c->replyWord)) {
+		creatureSays(creature, stage, phraseFor("babble", creature, c));
+		return;
+	}
+	// in its own tongue until it has learned the word (a baby always: it has
+	// no words yet)
+	Utterance u;
+	u.spoken = trim(engine.wordlist[c->replyWord]);
+	bool knows = stage > 0 && knowsWord(c, c->replyWord);
+	u.shown = knows ? u.spoken : nativeWord(creature, u.spoken);
+	if (knows)
+		u.learned.push_back(c->replyWord);
+	creatureSays(creature, stage, u);
 }
 
 void creatureSays(Agent* creature, int stage, const Utterance& u) {
@@ -584,6 +870,20 @@ void creatureSays(Agent* creature, int stage, const Utterance& u) {
 		bubbles[creature->getUNID()] = AgentRef(b);
 	}
 	hearWords(creature, u.learned, HEAR_CREATURE);
+	// and its own names for things: names spread, family hearing them twice
+	// as well
+	if (!u.own.empty()) {
+		std::string from = world.history->findMoniker(creatureOf(creature)->getGenome());
+		float sx = centreX(creature), sy = centreY(creature);
+		for (auto& a : world.agents) {
+			oldCreature* c = a && a.get() != creature && !a->isDying() ? creatureOf(a.get()) : nullptr;
+			if (!c || !inEarshot(a.get(), sx, sy))
+				continue;
+			int amount = HEAR_CREATURE * (!from.empty() && closeKin(from, world.history->findMoniker(c->getGenome())) ? 2 : 1);
+			for (auto& [word, category] : u.own)
+				hearOwnName(c, word, category, amount);
+		}
+	}
 	recordSpeech(creature, u.shown);
 	try {
 		creature->speak(u.spoken.empty() ? u.shown : u.spoken, voicePitch(stage), voicePace(stage));

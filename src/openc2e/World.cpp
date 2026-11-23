@@ -849,12 +849,33 @@ void World::drawWorld(Camera* cam, RenderTarget* surface, bool skip_hand, Agent*
 	// this tick's move, by the part of the tick not yet elapsed (not for
 	// jumps)
 	const float glide = 1.0f - engine.tickFraction();
+	const bool smooth = SkeletalCreature::smoothMovement();
 	auto glideOffset = [&](renderable* r, int& gx, int& gy) {
 		gx = gy = 0;
 		auto* p = dynamic_cast<CompoundPart*>(r);
-		if (!p || glide <= 0)
+		if (!p)
 			return;
 		Agent* a = p->getParent();
+		// what a creature drawn between poses (SmoothMovement.cpp) carries,
+		// its speech, and the selected one's halo (2 1 3), go with it
+		if (smooth) {
+			float dx, dy;
+			auto shifted = [&](Agent* by, int what) {
+				auto* sc = dynamic_cast<SkeletalCreature*>(by);
+				if (!sc || !(what == 0 ? sc->drawnCarryShift(dx, dy) : what == 1 ? sc->drawnShift(dx, dy) : sc->drawnHeadShift(dx, dy)))
+					return;
+				gx = (int)std::lround(dx);
+				gy = (int)std::lround(dy);
+			};
+			if (a->carriedby)
+				shifted(a->carriedby.get(), 0);
+			else if (a->floatingagent)
+				shifted(a->floatingagent.get(), 1);
+			else if (a->family == 2 && a->genus == 1 && a->species == 3)
+				shifted(selectedcreature.get(), 2);
+		}
+		if (glide <= 0)
+			return;
 		// a creature carried along by a script (the stream under the cave
 		// lift's dock moves it a few px every tick) glides too, rather than
 		// jumping ten times a second (owner, 2026-11-14: "really jerky")

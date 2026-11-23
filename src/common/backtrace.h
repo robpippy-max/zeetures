@@ -151,6 +151,10 @@ LONG WINAPI TopLevelExceptionHandler(PEXCEPTION_POINTERS pExceptionInfo) {
 static void print_frames(bool demangle);
 
 static void signalhandler(int) {
+	// (ended in 5 s whatever happens: a crash inside the memory allocator left
+	// the handler waiting for its lock, and the game frozen instead of closed)
+	signal(SIGALRM, SIG_DFL);
+	alarm(5);
 	print_frames(true);
 	exit(1);
 }

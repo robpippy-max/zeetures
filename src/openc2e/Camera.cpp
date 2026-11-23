@@ -27,6 +27,7 @@
 #include "Map.h"
 #include "MetaRoom.h"
 #include "World.h"
+#include "creatures/SkeletalCreature.h"
 #include "common/NumericCast.h"
 #include "common/backend/Backend.h"
 
@@ -84,6 +85,9 @@ void Camera::moveTo(int _x, int _y, panstyle pan) {
 }
 
 void Camera::stepPan() {
+	// following a creature that is drawn moving between ticks
+	if (!panning && !world.paused && SkeletalCreature::smoothMovement() && dynamic_cast<SkeletalCreature*>(trackedagent.get()))
+		updateTracking();
 	if (!panning)
 		return;
 	float t = std::min(1.0f, (engine.get_ticks_msec() - panStart) / (float)std::max(panTime, 1u));
@@ -194,6 +198,13 @@ void Camera::updateTracking() {
 	// TODO: not very intelligent :) also, are int casts correct?
 	int trackx = (int)trackedagent->x + ((int)trackedagent->getWidth() / 2) - (int)(getWidth() / 2);
 	int tracky = (int)trackedagent->y + ((int)trackedagent->getHeight() / 2) - (int)(getHeight() / 2);
+	// a creature drawn moving smoothly: its neck as drawn (its corner, which
+	// the above goes by, shifts about with each pose)
+	float nx, ny;
+	if (auto* sc = dynamic_cast<SkeletalCreature*>(trackedagent.get()); sc && sc->drawnNeck(nx, ny)) {
+		trackx = (int)std::lround(nx) - (int)(getWidth() / 2);
+		tracky = (int)std::lround(ny) + 20 - (int)(getHeight() / 2);
+	}
 	moveToGlobal(trackx, tracky);
 }
 

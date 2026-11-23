@@ -309,6 +309,20 @@ jobs:
             echo "$f" >> carried.txt
           fi
         done
+        # For the game's own updater (Updater.cpp): the version, and each
+        # download built tonight with its size and SHA-256 (one kept from an
+        # earlier night is an older version, so it is not offered)
+        version=$(sed -n 's/^#define OPENC2E_FORK_VERSION "\(.*\)"$/\1/p' src/openc2e/openc2eimgui/C2ToolBar.cpp)
+        {
+          echo "version $version"
+          echo "commit $GITHUB_SHA"
+          for f in Zeetures-Setup.exe Zeetures-macOS.dmg Zeetures-x86_64.AppImage Zeetures-i686.AppImage; do
+            if [ -f "files/$f" ] && ! grep -qx "$f" carried.txt; then
+              echo "file $f $(stat -c %s "files/$f") $(sha256sum "files/$f" | cut -d' ' -f1)"
+            fi
+          done
+        } > files/zeetures-update.txt
+        cat files/zeetures-update.txt
         ls -l files
     - name: Release notes
       run: |

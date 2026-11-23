@@ -434,6 +434,20 @@ void Engine::drawWorld() {
 	}
 	camera->stepPan(); // smooth scrolling, frame by frame
 	Openc2eImGui::Update();
+	// C1/C2: following goes with the selection (owner, 2026-11-22): while the
+	// view follows the creature selected, choosing another, by whatever
+	// button, kit or key, goes on to follow that one
+	if (version <= 2) {
+		static AgentRef lastSelected;
+		static bool following = false;
+		AgentRef selected(world.selectedcreature);
+		if (selected) {
+			if (selected != lastSelected && following)
+				camera->trackAgent(selected, 0, 0, flexible, none);
+			lastSelected = selected;
+			following = camera->trackedAgent() == selected;
+		}
+	}
 	get_backend()->getMainRenderTarget()->setViewportOffsetTop(Openc2eImGui::GetViewportOffsetTop());
 	get_backend()->getMainRenderTarget()->setViewportOffsetBottom(Openc2eImGui::GetViewportOffsetBottom());
 	get_backend()->getMainRenderTarget()->setViewportOffsetRight(Openc2eImGui::GetViewportOffsetRight());
@@ -1188,7 +1202,9 @@ void Engine::update() {
 //   bars off|on       the toolbar, status bar and scroll bars hidden or shown
 //   kit ID [PAGE]     opens a kit (health, breeders, owners, ecology...) at a page
 //   kits off          closes the kits
+//   say X Y TEXT      the hand goes to world X, Y and says it
 //   caos TEXT         runs CAOS (as the world's additions run)
+//   die               the creature chosen dies
 // For recording scripted shots with OPENC2E_RECORD.
 static void runDirector() {
 	static const char* file = devenv("OPENC2E_DIRECTOR");
@@ -1206,7 +1222,8 @@ static void runDirector() {
 		std::ifstream in(file);
 		std::string line;
 		while (std::getline(in, line)) {
-			if (auto h = line.find('#'); h != std::string::npos)
+			// ('#' starts a comment, alone; STM# is CAOS)
+			if (auto h = !line.empty() && line[0] == '#' ? 0 : line.find(" # "); h != std::string::npos)
 				line = line.substr(0, h);
 			std::istringstream l(line);
 			Cue c;
@@ -1268,10 +1285,24 @@ static void runDirector() {
 			Openc2eImgui::OpenC2KitAt(id.c_str(), page.empty() ? nullptr : page.c_str());
 		} else if (cmd == "kits") {
 			Openc2eImgui::CloseC2Kits();
+		} else if (cmd == "say") {
+			float sx = 0, sy = 0;
+			std::string text;
+			l >> sx >> sy;
+			std::getline(l, text);
+			text.erase(0, text.find_first_not_of(" \t"));
+			if (world.hand()) {
+				world.hand()->moveTo(sx, sy);
+				handSays(text);
+			}
 		} else if (cmd == "caos") {
 			std::string text;
 			std::getline(l, text);
 			world.executeInitScriptText("director", text);
+		} else if (cmd == "die") {
+			auto* ca = dynamic_cast<CreatureAgent*>(world.selectedcreature.get());
+			if (ca && ca->getCreature() && ca->getCreature()->isAlive())
+				ca->getCreature()->die();
 		}
 		next++;
 	}
@@ -1365,6 +1396,33 @@ bool Engine::tick() {
 			engine.zoom = (float)atof(z);
 		// move the camera first whenever this snapshot is somewhere new
 		static int camx = INT_MIN, camy = INT_MIN;
+		// -2,-2: at a sleeping creature (found once, then stayed at)
+		if (sx == -2 && sy == -2)
+			for (auto& a : world.agents)
+				if (auto* ca = a ? dynamic_cast<CreatureAgent*>(a.get()) : nullptr; ca && ca->getCreature() && ca->getCreature()->isAlive() && ca->getCreature()->isAsleep()) {
+					for (auto& snap : snapshots)
+						if (std::get<0>(snap) == -2)
+							std::get<0>(snap) = std::max(0, (int)a->x - 375), std::get<1>(snap) = (int)a->y - 300;
+					break;
+				}
+		if (sx == -2 && sy == -2)
+			return false;
+		// -3,-3: following a walking creature (OPENC2E_SNAPSHOT_GENUS=n:
+		// of that genus; OPENC2E_SNAPSHOT_CARRYING=1: carrying something)
+		if (sx == -3 && sy == -3) {
+			const char* g = devenv("OPENC2E_SNAPSHOT_GENUS");
+			for (auto& a : world.agents)
+				if (auto* sc = dynamic_cast<SkeletalCreature*>(a.get()); sc && (sc->isWalking() || sc->isApproaching()) && sc->facing() >= 2 && !sc->invehicle && (!g || a->genus == atoi(g)) && (!devenv("OPENC2E_SNAPSHOT_CARRYING") || a->carrying)) {
+					world.selectCreature(AgentRef(a).lock());
+					camera->trackAgent(a, 0, 0, flexible, none);
+					for (auto& snap : snapshots)
+						if (std::get<0>(snap) == -3)
+							std::get<0>(snap) = std::get<1>(snap) = -1;
+					break;
+				}
+			if (sx == -3)
+				return false;
+		}
 		if (sx == -1 && sy == -1) // -1,-1: wherever the view is
 			camx = sx, camy = sy;
 		if (sx != camx || sy != camy) {
@@ -1455,7 +1513,10 @@ bool Engine::tick() {
 }
 
 void Engine::handleKeyboardScrolling() {
-	// keyboard-based scrolling
+	// keyboard-based scrolling (not while a box in a window is typed in: its
+	// arrow keys are its own)
+	if (ImGui::GetCurrentContext() && ImGui::GetIO().WantTextInput)
+		return;
 	static float accelspeed = 8, decelspeed = .5, maxspeed = 64;
 	static float velx = 0;
 	static float vely = 0;
@@ -1519,6 +1580,10 @@ void Engine::handleKeyboardScrolling() {
 
 	// do the actual movement
 	if (velx || vely) {
+		// C1/C2: moving the view stops following, as the wheel does (owner,
+		// 2026-11-22); not while the view only glides on after the key
+		if (version <= 2 && (leftdown || rightdown || updown || downdown))
+			camera->trackAgent(AgentRef(), 0, 0, brittle, none);
 		int adjustx = engine.camera->getX(), adjusty = engine.camera->getY();
 		int adjustbyx = (int)velx, adjustbyy = (int)vely;
 
@@ -1706,8 +1771,11 @@ void Engine::handleTextInput(BackendEvent& event) {
 		}
 	}
 
-	// tell the agent with keyboard focus
-	if (world.focusagent) {
+	// tell the agent with keyboard focus (only characters that print: some
+	// systems send Backspace as a character too, "\b", after its key, and
+	// the hand's typing showed it as a block where the letter had been; a
+	// player, 2026-11-22)
+	if (world.focusagent && cp1252_isprint(translated_char)) {
 		CompoundPart* t = world.focusagent.get()->part(world.focuspart);
 		if (t && t->canGainFocus())
 			t->handleTranslatedChar(translated_char);
@@ -1750,6 +1818,17 @@ void Engine::handleRawKeyDown(BackendEvent& event) {
 	// C1/C2: F12 switches full screen on and off
 	if (version <= 2 && event.key == OPENC2E_KEY_F12)
 		get_backend()->setFullscreen(!get_backend()->isFullscreen());
+	// C2: Ctrl+S says the last thing typed again (its manual: "CTRL and S:
+	// Repeat the last piece of text you typed in"; a player, 2026-11-22), at
+	// most twice a second (a key held down repeats)
+	if (version == 2 && event.key == OPENC2E_KEY_S && get_backend()->keyDown(OPENC2E_KEY_CTRL)) {
+		static unsigned int said = 0;
+		if (world.tickcount - said >= 5 || world.tickcount < said) {
+			said = world.tickcount;
+			handSaysAgain();
+		}
+		return;
+	}
 	switch (event.key) {
 		case OPENC2E_KEY_W:
 			w_down = true;
@@ -2472,10 +2551,12 @@ bool Engine::initialSetup() {
 		// overwritten by the next autosave; the world goes on from what loaded)
 		try {
 			WorldSave::LoadWorldState(currentworlddir);
+			WorldSave::SetAsideIncompleteSave(currentworlddir);
 		} catch (std::exception& e) {
 			WorldSave::SetAsideUnreadableSave(currentworlddir, e.what());
 		}
 		worldready = true;
+		Openc2eImgui::DefaultWorldOpened();
 		fflush(stdout); // (how the load went is in the log whatever follows)
 	}
 

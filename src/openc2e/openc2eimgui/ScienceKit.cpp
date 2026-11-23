@@ -460,6 +460,31 @@ static void SyringePage() {
 			for (auto& [ch, amt] : mixes[mix].chems)
 				c->addChemical((unsigned char)ch, (unsigned char)std::clamp(amt, 0, 255));
 			message = fmt::format("Injected {}.", mixes[mix].name);
+			if (!c->isAlive()) {
+				int energy = 0, atp = 0;
+				for (auto& [ch, amt] : mixes[mix].chems) {
+					if (ch == 98)
+						energy += amt;
+					if (ch == 99)
+						atp += amt;
+				}
+				switch (c->kickstart(energy, atp)) {
+					case c2Creature::revived:
+						message += " Its heart is beating! Keep its strength up until it comes round.";
+						break;
+					case c2Creature::primed:
+						message += " Its body is ready.";
+						break;
+					case c2Creature::stillDead:
+						message += " Nothing happens.";
+						break;
+					case c2Creature::tooLate:
+						message += " It is too late.";
+						break;
+					case c2Creature::notDead:
+						break;
+				}
+			}
 		} else if (mode == 1) {
 			c->addChemical((unsigned char)chem, (unsigned char)amount);
 			message = fmt::format("Injected {} {}.", amount, chemName(chem));
@@ -469,6 +494,31 @@ static void SyringePage() {
 		ImGui::EndDisabled();
 	if (!message.empty())
 		ImGui::TextUnformatted(message.c_str());
+	// the newly dead can be brought back (c2Creature::kickstart)
+	if (!c->isAlive()) {
+		ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 330);
+		// (the mixtures by their names in the player's language: the first
+		// rich in Energy, the first rich in ATP)
+		std::string fuel = "a mixture rich in Energy", spark = "one rich in ATP";
+		for (auto it = mixes.rbegin(); it != mixes.rend(); ++it)
+			for (auto& [ch, amt] : it->chems) {
+				if (ch == 98 && amt >= 200)
+					fuel = "the " + it->name;
+				if (ch == 99 && amt >= 200)
+					spark = "the " + it->name;
+			}
+		switch (c->kickstartState()) {
+			case c2Creature::stillDead:
+				ImGui::TextColored(ImVec4(1, 0.75f, 0.45f, 1), "It has only just died. While its body still lies there, %s and then %s may bring it back.", fuel.c_str(), spark.c_str());
+				break;
+			case c2Creature::primed:
+				ImGui::TextColored(ImVec4(1, 0.75f, 0.45f, 1), "Its body has fuel again. Now %s, quickly.", spark.c_str());
+				break;
+			default:
+				ImGui::TextDisabled("It cannot be brought back.");
+		}
+		ImGui::PopTextWrapPos();
+	}
 	ImGui::EndGroup();
 }
 

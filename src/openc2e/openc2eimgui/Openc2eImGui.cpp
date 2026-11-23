@@ -1,4 +1,5 @@
 #include "HelpWindow.h"
+#include "Updater.h"
 #include "Openc2eImGui.h"
 
 #include "AgentInjector.h"
@@ -63,6 +64,7 @@ void Update() {
 		Openc2eImgui::DrawEyeView();
 		Openc2eImgui::DrawC2Kits();
 		Openc2eImgui::DrawHelpWindow();
+		Openc2eImgui::UpdaterTick();
 	}
 	if (ImGui::GetIO().MouseClicked[0] && ImGui::IsKeyDown(ImGuiMod_Shortcut)) {
 		ImGui::OpenPopup("Menu");

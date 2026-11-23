@@ -21,6 +21,7 @@
 #include "common/backend/Backend.h"
 #include "common/creaturesImage.h"
 #include "creatures/CreatureMind.h"
+#include "creatures/CreatureSpeech.h"
 #include "creatures/oldCreature.h"
 #include "fileformats/ImageUtils.h"
 #include "historyManager.h"
@@ -829,6 +830,54 @@ void MoodPage(const MindView& v) {
 	ImGui::Dummy(ImVec2(axisW + W, H + 46));
 }
 
+// the words it knows, those it is learning, and its own names for things
+// (CreatureSpeech.h; owner, 2026-11-22: "build the made-up names part, too")
+void WordsPage(oldCreature* c) {
+	auto word = [](size_t i) {
+		std::string w = engine.wordlist[i];
+		while (!w.empty() && w.back() == ' ')
+			w.pop_back();
+		return w;
+	};
+	std::string known;
+	std::vector<std::pair<int, std::string>> learning;
+	int n = 0;
+	for (size_t i = 0; i < c->vocab.size() && i < engine.wordlist.size(); i++) {
+		std::string w = word(i);
+		if (w.empty() || c->vocab[i] == 0)
+			continue;
+		if (c->vocab[i] >= WORD_KNOWN) {
+			known += (n++ ? ", " : "") + w;
+		} else
+			learning.push_back({c->vocab[i], w});
+	}
+	ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 560);
+	ImGui::Text("Words it knows (%d)", n);
+	ImGui::TextDisabled("%s", known.empty() ? "None yet: it speaks its own tongue." : known.c_str());
+	ImGui::Spacing();
+	ImGui::TextUnformatted("Words it is learning");
+	std::sort(learning.rbegin(), learning.rend());
+	std::string some;
+	for (size_t i = 0; i < learning.size() && i < 12; i++)
+		some += fmt::format("{}{} ({:.0f}%)", i ? ", " : "", learning[i].second, 100.0f * learning[i].first / WORD_KNOWN);
+	ImGui::TextDisabled("%s", some.empty() ? "None." : some.c_str());
+	ImGui::Spacing();
+	ImGui::TextUnformatted("Names of its own for things");
+	bool any = false;
+	for (auto& [name, for_] : c->ownNames)
+		for (auto& [category, v] : for_) {
+			if (v < 24)
+				continue;
+			any = true;
+			std::string thing = (size_t)(16 + category) < engine.wordlist.size() ? word(16 + category) : std::string();
+			bool knows = ownNameMeans(c, name) == category;
+			ImGui::BulletText("%s", fmt::format("\"{}\": {}{}", name, thing.empty() ? "something" : thing, knows ? "" : fmt::format(" (learning, {:.0f}%)", std::min(99.0f, 100.0f * v / WORD_KNOWN))).c_str());
+		}
+	if (!any)
+		ImGui::TextDisabled("None yet. Tickle it and type a name for your hand, or point the hand at a thing (or hold it) and type a name for that.");
+	ImGui::PopTextWrapPos();
+}
+
 } // namespace
 
 void DrawMindKit() {
@@ -866,6 +915,10 @@ void DrawMindKit() {
 		}
 		if (KitTab("Mood")) {
 			MoodPage(v);
+			ImGui::EndTabItem();
+		}
+		if (KitTab("Words")) {
+			WordsPage(c);
 			ImGui::EndTabItem();
 		}
 		ImGui::EndTabBar();

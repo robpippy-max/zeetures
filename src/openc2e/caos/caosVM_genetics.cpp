@@ -211,6 +211,16 @@ void c_NEW_GENE(caosVM* vm) {
 	if (dad == 0)
 		dad = mum;
 	std::string mumName = genomeNameFromInt(mum), dadName = genomeNameFromInt(dad);
+	// the Boney Grendels pack's genome, when the player does not have it
+	// (its download failed, or packs are off): the game's own grendel. The
+	// grendel eggs ask for one or the other at random (grendels.cos), and
+	// those that asked for "bone" stopped mid-hatch (a player, 2026-11-22).
+	if ((mumName == "bone" || dadName == "bone") && !genomeByName("bone")) {
+		fmt::print("* NEW: GENE: no Boney Grendels pack here, a standard grendel instead\n");
+		for (auto* name : {&mumName, &dadName})
+			if (*name == "bone")
+				*name = "gren";
+	}
 	std::shared_ptr<genomeFile> m = genomeByName(mumName), d = genomeByName(dadName);
 	if (!m)
 		throw Exception("NEW: GENE: failed to find genome '" + mumName + "'");

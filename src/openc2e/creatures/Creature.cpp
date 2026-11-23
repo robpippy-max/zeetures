@@ -1566,6 +1566,79 @@ void c2Creature::updateConsciousness() {
 #endif
 }
 
+// The Science Kit's Syringe has two mixtures for the dead, as the game's own
+// text has it: the Metabolism Transplant, "first step in kickstarting a dead
+// creature", and the Defibrillant, "second step ... repeat every 10 secs". A
+// dead body's chemistry stands still, so their chemicals alone did nothing
+// (owner, 2026-11-22). Our own rule: for as long as the body lies where it
+// died (30 s, until C2's death script lifts it away), a mixture rich in Energy
+// fills its stores, and after that one rich in ATP brings it back: out cold,
+// with the organs that failed at a quarter of their strength, to come round
+// once its ATP holds (updateConsciousness), or to die again if what killed
+// it has not been put right. Old age cannot be undone.
+c2Creature::Kickstart c2Creature::kickstartState() {
+	if (alive)
+		return notDead;
+#ifndef _CREATURE_STANDALONE
+	if (!parentagent || parentagent->isDying() || diedofoldage || engine.version != 2 || !world.history)
+		return tooLate;
+	std::string mon = world.history->findMoniker(genome);
+	if (mon.empty() || !world.history->hasMoniker(mon))
+		return tooLate;
+	const monikerData& m = world.history->getMoniker(mon);
+	if (!m.died || world.worldtickcount < m.diedtick || world.worldtickcount - m.diedtick > 290)
+		return tooLate;
+	return kickstartPrimed ? primed : stillDead;
+#else
+	return tooLate;
+#endif
+}
+
+c2Creature::Kickstart c2Creature::kickstart(int energy, int atp) {
+	Kickstart s = kickstartState();
+	if (s != stillDead && s != primed)
+		return s;
+#ifndef _CREATURE_STANDALONE
+	const int plenty = 200;
+	if (energy >= plenty)
+		kickstartPrimed = true;
+	if (!kickstartPrimed)
+		return stillDead;
+	if (atp < plenty)
+		return primed;
+	// back, out cold
+	kickstartPrimed = false;
+	alive = true;
+	minddied = false;
+	dead = 0;
+	deadTicks = 0;
+	diedof.clear();
+	breathHeld = 0;
+	noEnergyTicks = 0;
+	recoveringTicks = 0;
+	asleep = false;
+	unconscious = true;
+	for (auto& o : organs) {
+		const float quarter = o->getInitialLifeforce() * 0.25f;
+		if (o->getLongTermLifeforce() < quarter)
+			o->restoreLifeforce(quarter, quarter);
+	}
+	parentagent->stopScript(); // (the death script, waiting to lift it away)
+	parentagent->queueScript(70); // lying, groaning
+	std::string mon = world.history->findMoniker(genome);
+	world.history->getMoniker(mon).cameBack();
+	// (its death stays in the life log; its notice on the status bar goes)
+	for (auto* list : {&world.history->notices, &world.history->shownNotices})
+		list->erase(std::remove_if(list->begin(), list->end(), [&](const lifeLogEntry& e) { return e.kind == lifeLogEntry::death && e.moniker == mon; }), list->end());
+	world.history->logLife(lifeLogEntry::cameRound, mon, (int)stage);
+	world.history->lifelog.back().cause = "revived";
+	world.history->notices.back().cause = "revived";
+	world.history->tell(mon, storyEntry::cameRound, "", "revived");
+	fmt::print("* {} brought back to life (the Syringe)\n", mon);
+#endif
+	return revived;
+}
+
 bool c2Creature::breathesWater() {
 	if (waterbreather < 0) {
 		waterbreather = 0;

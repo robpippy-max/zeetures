@@ -327,8 +327,12 @@ void PointerAgent::handleEvent(BackendEvent& event) {
 			editAgent->moveTo(pointerX(), pointerY());
 
 		// middle mouse button scrolling
-		if (event.button & buttonmiddle)
+		if (event.button & buttonmiddle) {
+			// (C1/C2: which stops following, as the wheel does)
+			if (engine.version <= 2 && (event.xrel != 0 || event.yrel != 0))
+				engine.camera->trackAgent(AgentRef(), 0, 0, brittle, none);
 			engine.camera->moveTo(engine.camera->getX() - (int)std::lround(event.xrel / engine.zoom), engine.camera->getY() - (int)std::lround(event.yrel / engine.zoom), jump);
+		}
 	} else if (!handle_events) {
 		/* mouse move events are (apparently - see eg C3 agent help) still handled with handle_events disabled, but nothing else */
 		return;

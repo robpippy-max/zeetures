@@ -58,6 +58,7 @@ class CreatureAgent {
 	void stopWalking();
 	void approach(AgentRef it);
 	bool isApproaching() { return approaching; }
+	bool isWalking() { return walking; }
 };
 
 #endif

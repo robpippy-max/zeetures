@@ -126,6 +126,7 @@ struct MindPerception {
 	unsigned int tick = 0; // creature age in brain ticks
 	lifestage stage = baby;
 	bool asleep = false;
+	bool dozing = false; // the body's own falling asleep (the reflex, event 69) is running
 	bool dreaming = false;
 	bool female = false;
 	int genus = -1; // 1 norn, 2 grendel, 3 ettin
@@ -228,6 +229,16 @@ struct MindPerception {
 	// landed), 0-255, as set for the genome's emitters (oldCreature::
 	// updateBrainCells). Instincts that name a sense wait for it.
 	std::array<unsigned char, 32> senses{};
+	// The hand's speech (owner, 2026-11-22: creatures "look at you and
+	// answer"; known verbs are weighed): the verb and the thing it knows the
+	// words for, -1 none, and mind ticks since (-1: nothing lately)
+	int heardVerb = -1, heardNoun = -1, heardAge = -1;
+	bool heardNamed = false;
+	// called to look at a thing (the hand that spoke or touched it, or what
+	// it named): its category, and mind ticks since
+	int calledCategory = -1, calledAge = -1;
+	// the hand has just patted or slapped it
+	bool handPat = false, handSlap = false;
 	// the chemicals this genome rewards and punishes learning with (those
 	// its decision lobe's first two chemical slots take: 52 and 53 in the
 	// game's genomes)
@@ -241,6 +252,7 @@ struct MindOutput {
 	int attentionCategory = -1; // -1 = no change
 	int decision = -1; // -1 = no change; otherwise run creature event 16 + decision
 	int sleep = -1; // -1 = no change, 0 = wake, 1 = fall asleep
+	bool resistSleep = false; // fights off the body's own falling asleep (event 69) for now
 	int expression = -1; // -1 = no change; else facial expression slot 0-5 in the head sprites
 	// An object whose use keeps doing nothing for the creature: for a while,
 	// notice others of its kind first (the engine notices one object per

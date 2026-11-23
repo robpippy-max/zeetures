@@ -21,8 +21,13 @@ struct SetAsideSave {
 	std::filesystem::path worlddir, kept; // kept: empty if it could not be moved
 	std::string why;
 	bool happened = false;
+	int missing = 0; // it was read, but this many of its creatures could not be made (kept: a copy of it)
 };
 const SetAsideSave& LastSetAside();
+// After loading: when some of the save's creatures could not be made (their
+// breed's files gone or damaged), a copy of the save is kept as
+// save.incomplete-DATE before the world is saved again without them.
+void SetAsideIncompleteSave(const std::filesystem::path& worlddir);
 // puts it back as the world's save (for quitting without changing anything)
 bool PutBackSetAsideSave(std::string& error);
 // Puts the view back where it was saved (place and zoom), once the world has

@@ -299,6 +299,37 @@ VERSIONS = [
      "File > Exit saved an emptied world: quitting now saves it whole, an empty world is never saved over a good "
      "one, and a world already stripped gets its objects back. File > Exit also works while paused. Players' builds "
      "open no listening port, so no firewall question at the first start."),
+    ("0.28.3", "31d17d7e",
+     "The first players' reports fixed: display scaling on Windows, speaking after naming a world, creatures that "
+     "grew up unable to breed, sleep broken off within seconds, a crash at some births, and clearer wording of what "
+     "a creature is doing."),
+    ("0.28.4", "5e88e479",
+     "Spring and summer fruit that feeds: hatchlings no longer starve on a full stomach in a new world."),
+    ("0.28.5", "7dada256",
+     "Z's over creatures for as long as they sleep, and grendel eggs that hatch without the Boney Grendels pack."),
+    ("0.29.0", "c292a7f3",
+     "Creatures move smoothly from pose to pose, with pictures made between the game's own by turning each part at "
+     "its joint; Camera > Smooth Movement turns it off."),
+    ("0.29.1", "07727e4b",
+     "The hidden passage west of the incubator's pond can be walked both ways, and a world whose breed files are "
+     "missing no longer crashes: its save is kept safe."),
+    ("0.29.2", "1a1f7ddd",
+     "Smooth walking without pauses or sudden turns, a world opened at every launch if you like, and creatures put "
+     "down on the volcano's catwalk."),
+    ("0.30.0", "6a7941e0",
+     "Creatures that answer when spoken to: they look at you, try your words, look at what you name, and weigh the "
+     "verbs they know; and Ctrl+S says your last words again."),
+    ("0.31.0", "7b2eab6f",
+     "Names of your own: teach creatures what to call your hand and things, and they use them and teach one another; "
+     "and following goes with the creature selected."),
+    ("0.32.0", "6f395b70",
+     "Help in depth: 43 topics with a search and links, one for every kit, opened with F1."),
+    ("0.32.1", "4ecc0052",
+     "Favourite places saved; Save World As copies photos and genes; the Syringe brings back the newly dead; "
+     "the arrow keys and dragging stop following."),
+    ("0.33.0", "2a09b45a",
+     "Zeetures updates itself from inside the game, with switches for checking and for installing automatically; "
+     "Backspace no longer leaves a block in typed words."),
 ]
 
 MONTHS = ["January", "February", "March", "April", "May", "June", "July",

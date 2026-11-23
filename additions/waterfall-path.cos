@@ -69,8 +69,10 @@ inst new: simp zajb 1 0 3000 0 setv cls2 2 3 245 setv attr 0 mvto 4078 700 slow
 * The hidden doorway: rooms cannot run a tunnel behind the lift shaft (the
 * lift needs the shaft's rooms), so a watcher (2 1 150, invisible) carries a
 * creature that walks west through the tunnel, while hidden behind the rock
-* at its west end (centre x 4300-4332, feet at the tunnel's floor, facing
-* left), to the arch: standing on the arch's floor (840) with its right
+* at its west end (centre x 4300-4332, feet at the tunnel's floor, 836-896,
+* facing left; it looked for feet at 866 or lower until 2026-11-22, as the
+* floor was before it was raised to the shaft's stop, and took only some of
+* them), to the arch: standing on the arch's floor (840) with its right
 * side at x 4180, hidden behind the jamb drawn in front (a creature wider
 * than the jamb's 64 px already shows inside the opening), still walking
 * west, out past the jamb's edge. Going east, a creature crosses the lift's shaft into the
@@ -87,7 +89,7 @@ scrp 2 1 150 9
       setv var0 posl addv var0 posr divv var0 2
       doif var0 ge 4300
         doif var0 le 4332
-          doif posb ge 866
+          doif posb ge 836
             doif posb le 896
               doif dirn eq 3
                 setv var1 4180 subv var1 posr addv var1 posl

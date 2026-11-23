@@ -801,7 +801,7 @@ void SDLBackend::run(std::function<bool()> update_callback) {
 
 		// (the window may have changed size since the last frame)
 		mainrendertarget->knownw = mainrendertarget->knownh = -1;
-		// TODO: does this work on Windows?
+		SDL_SetRenderTarget(renderer, nullptr); // (the scale is kept per target)
 		SDL_SetRenderScale(renderer, SDL_GetWindowDisplayScale(window), SDL_GetWindowDisplayScale(window));
 
 		bool focused = SDL_GetWindowFlags(window) & (SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MOUSE_FOCUS);
@@ -815,6 +815,12 @@ void SDLBackend::run(std::function<bool()> update_callback) {
 			SDL_Delay(desired_ticks_per_frame - (frame_end - last_frame_end));
 		}
 		last_frame_end = SDL_GetTicks();
+
+		// Closing a text box stops text input for the window, and typing to
+		// the creatures needs it too: naming a new world left the hand unable
+		// to speak until the world was opened again (reported 2026-11-22)
+		if (!SDL_TextInputActive(window))
+			SDL_StartTextInput(window);
 
 		ImGui_ImplSDLRenderer3_NewFrame();
 		ImGui_ImplSDL3_NewFrame();

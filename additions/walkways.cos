@@ -238,6 +238,9 @@ inst new: simp zbw4 1 0 600 0 setv cls2 2 3 233 setv attr 0 mvto 3053 2146 slow
 * tree's root slopes down; its doors were too small for creatures, so the
 * dock and its boat were cut off from the east. Its floor now follows the
 * root from 649 down to 693, and the dock and land doors are open.
+* (and the hand can put things down on it: the game's room allowed nothing
+* to be dropped in it; 2026-11-22)
+room 233 7380 340 7530 693 room 233 4 room 233 5 room 233 6 room 233 7 room 233 8 room 233 9 room 233 12 room 233 13 room 233 14 room 233 15 room 233 16 room 233 17 1
 ssfc 233 2 0 44 150 0
 setv door 0 142 233 255
 setv door 0 233 143 255

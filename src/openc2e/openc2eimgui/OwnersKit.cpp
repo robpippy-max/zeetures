@@ -415,7 +415,7 @@ static std::string entryDetail(const lifeLogEntry& e) {
 			return fmt::format("{}, aged {}{}, {}: {}", who, e.ageknown ? "" : "at least ", age, stageWord(e.stage), cause);
 		}
 		case lifeLogEntry::unconscious: return fmt::format("a {}, {}: out of energy. Mend the cause soon (out of water, fed, a Health Kit injection)", who, stageWord(e.stage));
-		case lifeLogEntry::cameRound: return fmt::format("a {}, {}: came round", who, stageWord(e.stage));
+		case lifeLogEntry::cameRound: return fmt::format("a {}, {}: {}", who, stageWord(e.stage), e.cause == "revived" ? "brought back to life" : "came round");
 		case lifeLogEntry::changed: return fmt::format("a {}, {}: {}", who, stageWord(e.stage), e.cause.empty() ? "changed into something else" : e.cause);
 		case lifeLogEntry::together: return fmt::format("{} hatched together, grew old together and reached the end together", e.cause);
 		case lifeLogEntry::fellIll: return fmt::format("a {}, {}: caught {}. Keep it warm and fed; the Health Kit shows how it is", who, stageWord(e.stage), e.cause.empty() ? "an illness" : e.cause);
@@ -542,7 +542,8 @@ void WorldHistoryPage() {
 				}
 			}
 			ImGui::TableNextColumn();
-			if (e.kind == lifeLogEntry::death) {
+			// (no grave while one brought back to life lives)
+			if (e.kind == lifeLogEntry::death && world.history->hasMoniker(e.moniker) && world.history->getMoniker(e.moniker).died) {
 				if (ImGui::SmallButton("Grave"))
 					followEntry(e);
 				if (ImGui::IsItemHovered())

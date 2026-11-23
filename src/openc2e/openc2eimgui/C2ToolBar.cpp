@@ -8,6 +8,7 @@
 
 #include "C2KitsInternal.h"
 #include "HelpWindow.h"
+#include "Updater.h"
 #include "creatures/CreatureSpeech.h"
 #include "creatures/Thoughts.h"
 
@@ -27,6 +28,7 @@
 #include "C2ScrollBars.h"
 #include "creatures/CreatureAgent.h"
 #include "creatures/Creature.h"
+#include "creatures/SkeletalCreature.h"
 #include "Camera.h"
 #include "Engine.h"
 #include "EmbeddedFiles.h"
@@ -242,7 +244,11 @@ static const char* GenusName(int genus) {
 // 0.5.0 (2026-11-14, night): every object kept between launches (stage 3).
 // 0.6.0 (2026-11-14, night): signature scents; the hand takes things from
 // creatures and keeps its mode; the gene lab's east end sealed.
-#define OPENC2E_FORK_VERSION "0.28.2"
+#define OPENC2E_FORK_VERSION "0.33.0"
+
+const char* ZeeturesVersion() {
+	return OPENC2E_FORK_VERSION;
+}
 
 // CITATIONS.md, as Help > About shows it: "## " headings as separators,
 // "- " entries wrapped, each Markdown link [text](url) as a small button
@@ -371,13 +377,20 @@ static bool s_set_aside_was_paused = false;
 			}
 			ImGui::EndMenu();
 		}
+		if (!engine.currentworlddir.empty()) {
+			bool atlaunch = DefaultWorld() == engine.currentworld;
+			if (ImGui::MenuItem("Open This World at Launch", nullptr, atlaunch))
+				SetDefaultWorld(atlaunch ? "" : engine.currentworld);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Starts in this world, without asking which");
+		}
 		if (ImGui::MenuItem("Save World", nullptr, false, !engine.currentworlddir.empty())) {
 			std::string err;
 			s_save_message = WorldSave::SaveWorldState(engine.currentworlddir, err) ? "World saved." : err;
 			s_open_save_message = true;
 		}
 		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Saves your creatures (bodies and minds) and eggs. Other objects still start as in the world's original file.");
+			ImGui::SetTooltip("Saves the whole world now: creatures (bodies and minds), eggs and objects. It also saves itself (Autosave, and when you quit).");
 		if (ImGui::MenuItem("Save World As...", nullptr, false, !engine.currentworlddir.empty()))
 			s_open_save_as = true;
 		// openc2e addition (owner, 2026-11-11): saves every few minutes
@@ -512,6 +525,11 @@ static bool s_set_aside_was_paused = false;
 			writeFlag("smooth-scrolling", s_smooth_scrolling);
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("Glide to places and creatures you choose, instead of jumping");
+		bool smoothmove = SkeletalCreature::smoothMovement();
+		if (ImGui::MenuItem("Smooth Movement", nullptr, &smoothmove))
+			SkeletalCreature::setSmoothMovement(smoothmove);
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("Creatures move smoothly from pose to pose, instead of jumping five times a second");
 		ImGui::Separator();
 		bool hasfree = false, hasnamed = false;
 		for (auto& f : world.favoriteplaces) {
@@ -611,12 +629,14 @@ static bool s_set_aside_was_paused = false;
 	// Help: what the toolbar's Help and Web buttons do, in words, and About
 	// (C2's items we cannot offer are left out; owner, 2026-11-12)
 	if (ImGui::BeginMenu("Help")) {
-		if (ImGui::MenuItem("Help Topics"))
+		if (ImGui::MenuItem("Help Topics", "F1"))
 			SetHelpOpen(true);
 		if (ImGui::MenuItem(FORK_NAME " on GitHub"))
 			SDL_OpenURL(FORK_WEB);
 		if (ImGui::MenuItem("openc2e on the Web"))
 			SDL_OpenURL(OPENC2E_WEB);
+		ImGui::Separator();
+		UpdaterMenuItems();
 		ImGui::Separator();
 		if (ImGui::MenuItem("About " FORK_NAME "..."))
 			s_open_about = true;
@@ -642,7 +662,7 @@ static bool s_set_aside_was_paused = false;
 		// (said plainly under the name, with what it forks from: owner, 2026-11-15)
 		ImGui::TextUnformatted("A fork of openc2e (from its commit dfcd46f2, 7 October 2026)");
 		ImGui::Text("Version %s (built %s)", OPENC2E_FORK_VERSION, __DATE__);
-		ImGui::TextUnformatted("by DotairZee");
+		ImGui::TextUnformatted("by DotairZee, developed alongside Claude (Anthropic's AI)");
 		// (owner, 2026-11-15: "this build is a labor of love by an old fan";
 		// British spelling, as all the game's own text)
 		ImGui::TextUnformatted("A labour of love by an old fan.");
@@ -695,6 +715,11 @@ static bool s_set_aside_was_paused = false;
 		if (ImGui::Button("openc2e on the Web"))
 			SDL_OpenURL(OPENC2E_WEB);
 		ImGui::SameLine();
+		if (ImGui::Button("Check for Updates")) {
+			CheckForUpdatesNow();
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
 		bool researchOpen = ImGui::IsPopupOpen("Research behind " FORK_NAME);
 		if (ImGui::Button("OK") || (!researchOpen && ImGui::IsKeyPressed(ImGuiKey_Escape)))
 			ImGui::CloseCurrentPopup();
@@ -733,7 +758,7 @@ static bool s_set_aside_was_paused = false;
 		if (ImGui::Button("Save") || enter) {
 			if (CreateWorld(s_name, WorldFile(engine.currentworlddir), s_error)) {
 				auto w = FindWorld(s_name);
-				if (w && WorldSave::SaveWorldState(w->dir, s_error)) {
+				if (w && CopyWorldExtras(engine.currentworlddir, w->dir, s_error) && WorldSave::SaveWorldState(w->dir, s_error)) {
 					engine.currentworld = w->name;
 					engine.currentworlddir = w->dir;
 					get_backend()->setWindowTitle(w->name + " - " FORK_NAME);
@@ -774,9 +799,15 @@ static bool s_set_aside_was_paused = false;
 	if (ImGui::BeginPopupModal("Saved Game Kept Safe", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
 		auto& aside = WorldSave::LastSetAside();
 		ImGui::PushTextWrapPos(ImGui::GetFontSize() * 34);
-		ImGui::TextWrapped("Zeetures could not read the saved game of \"%s\".", engine.currentworld.c_str());
-		ImGui::Spacing();
-		ImGui::TextWrapped("It may be damaged, or have been saved by a newer version of Zeetures. The world has started again from its original map.");
+		if (aside.missing > 0) {
+			ImGui::TextWrapped("%d %s of \"%s\" could not be loaded.", aside.missing, aside.missing == 1 ? "creature" : "creatures", engine.currentworld.c_str());
+			ImGui::Spacing();
+			ImGui::TextWrapped("Their breed's files may be missing or damaged: a breed pack removed, perhaps. The rest of the world is here.");
+		} else {
+			ImGui::TextWrapped("Zeetures could not read the saved game of \"%s\".", engine.currentworld.c_str());
+			ImGui::Spacing();
+			ImGui::TextWrapped("It may be damaged, or have been saved by a newer version of Zeetures. The world has started again from its original map.");
+		}
 		ImGui::Spacing();
 		if (!aside.kept.empty()) {
 			ImGui::TextWrapped("Your saved game has not been lost. It is kept in the world's folder as:");
@@ -787,14 +818,14 @@ static bool s_set_aside_was_paused = false;
 			ImGui::TextColored(ImVec4(1, 0.5f, 0.45f, 1), "%s", s_set_aside_error.c_str());
 		ImGui::PopTextWrapPos();
 		ImGui::Separator();
-		if (ImGui::Button("Quit and Put It Back")) {
+		if (ImGui::Button(aside.missing > 0 ? "Quit Without Saving" : "Quit and Put It Back")) {
 			if (WorldSave::PutBackSetAsideSave(s_set_aside_error)) {
 				engine.autosave = false; // (nothing is written over it)
 				engine.done = true;
 			}
 		}
 		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Closes Zeetures without saving and puts the saved game back,\nso that another version can open it.");
+			ImGui::SetTooltip(aside.missing > 0 ? "Closes Zeetures without saving, so that you can\nput the breed's files back and try again." : "Closes Zeetures without saving and puts the saved game back,\nso that another version can open it.");
 		ImGui::SameLine();
 		if (ImGui::Button("Open World Folder"))
 		{
@@ -810,7 +841,7 @@ static bool s_set_aside_was_paused = false;
 			ImGui::CloseCurrentPopup();
 		}
 		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Plays the world from its original map.\nThe old saved game stays in the folder.");
+			ImGui::SetTooltip(aside.missing > 0 ? "Plays on without them.\nThe saved game with them in it stays in the folder." : "Plays the world from its original map.\nThe old saved game stays in the folder.");
 		ImGui::EndPopup();
 	}
 
@@ -1264,7 +1295,7 @@ void DrawC2Toolbar() {
 		if (ToolButton(icon_help, true, "Help"))
 			SetHelpOpen(true);
 		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Help: how to play here, and what this version adds");
+			ImGui::SetTooltip("Help: how to play, what this version adds, and every kit (F1)");
 		if (ToolButton(icon_web, true, "Web"))
 			SDL_OpenURL(OPENC2E_WEB);
 		if (ImGui::IsItemHovered())

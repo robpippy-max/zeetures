@@ -1119,13 +1119,16 @@ void c2Organ::processReceptor(c2Receptor& d, bool checkchem) {
 
 	// TODO: same issues as c2eOrgan::processReceptor below, probably
 
-	if (checkchem) {
+	// (a receptor that has just switched on, at a new life stage, reads its
+	// chemical at once: one on the organ's own clock was waited for with the
+	// clock at 0, so the organ never ticked again. Every norn grown up since
+	// its world was opened had its reproductive organ stopped that way at
+	// adolescence, and none could breed; reported 2026-11-22.)
+	if (checkchem || !d.processed) {
 		d.processed = true;
 		d.lastvalue = parent->getChemical(g.chemical);
 	}
 
-	if (!d.processed)
-		return;
 	if (!d.locus)
 		return;
 

@@ -141,6 +141,13 @@ void monikerData::wasBorn() {
 	variant = c->getCreature()->getVariant();
 }
 
+void monikerData::cameBack() {
+	status = borncreature;
+	died = false;
+	diedtick = 0;
+	diedstage = -1;
+}
+
 void monikerData::hasDied() {
 	CreatureAgent* c = dynamic_cast<CreatureAgent*>(owner.get());
 	THROW_IFNOT(c);

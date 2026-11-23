@@ -214,7 +214,13 @@ bool ImportExportedCreature(const fs::path& path, std::string& message) {
 		return false;
 	}
 	a->setCreature(c);
-	a->finishInit();
+	try {
+		a->finishInit();
+	} catch (std::exception& ex) {
+		a->kill(); // (never left half made in the world: its next step crashes the game)
+		message = fmt::format("Couldn't import {}: {}", path.filename().string(), ex.what());
+		return false;
+	}
 	a->genome_slots[0] = genome;
 	world.newMoniker(genome, "imported", a);
 	std::string mon = world.history->findMoniker(genome);

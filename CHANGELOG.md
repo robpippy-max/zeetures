@@ -1,12 +1,22 @@
 # Zeetures changelog
 
-Every change Zeetures has made to [openc2e](https://github.com/openc2e/openc2e) since it was forked from openc2e's commit [dfcd46f2](https://github.com/openc2e/openc2e/commit/dfcd46f2) (7 October 2026): 626 commits, newest first, each with its full description. It is generated from the commit history by `.github/changelog.py`, so it lists everything, down to test aids and build fixes.
+Every change Zeetures has made to [openc2e](https://github.com/openc2e/openc2e) since it was forked from openc2e's commit [dfcd46f2](https://github.com/openc2e/openc2e/commit/dfcd46f2) (7 October 2026): 640 commits, newest first, each with its full description. It is generated from the commit history by `.github/changelog.py`, so it lists everything, down to test aids and build fixes.
 
 Not listed here: the world additions (the scripts and art recipes run from the player's Additions folder, such as the walkways, airlocks, lifts and seasonal bushes), which are kept outside this repository for now. Commits that changed the engine for them are listed.
 
 ## Versions
 
-- [Unreleased](#unreleased): 2 commits, 22 November 2026
+- [0.33.0](#version-0330): 2 commits, 22 November 2026
+- [0.32.1](#version-0321): 1 commits, 22 November 2026
+- [0.32.0](#version-0320): 1 commits, 22 November 2026
+- [0.31.0](#version-0310): 1 commits, 22 November 2026
+- [0.30.0](#version-0300): 1 commits, 22 November 2026
+- [0.29.2](#version-0292): 1 commits, 22 November 2026
+- [0.29.1](#version-0291): 2 commits, 22 November 2026
+- [0.29.0](#version-0290): 1 commits, 22 November 2026
+- [0.28.5](#version-0285): 1 commits, 22 November 2026
+- [0.28.4](#version-0284): 1 commits, 22 November 2026
+- [0.28.3](#version-0283): 4 commits, 22 November 2026
 - [0.28.2](#version-0282): 1 commits, 22 November 2026
 - [0.28.1](#version-0281): 5 commits, 21 November 2026
 - [0.28.0](#version-0280): 14 commits, 21 November 2026
@@ -73,11 +83,306 @@ Not listed here: the world additions (the scripts and art recipes run from the p
 - [0.3.0](#version-030): 38 commits, 12 November 2026
 - [0.1.0](#version-010): 206 commits, 7 November 2026 to 12 November 2026
 
-## Unreleased
+## Version 0.33.0
 
-Changes since the last version.
+Zeetures updates itself from inside the game, with switches for checking and for installing automatically; Backspace no longer leaves a block in typed words.
 
 ### 22 November 2026
+
+#### Updater: build on Windows
+
+[`2a09b45a`](https://github.com/DotairZee/zeetures/commit/2a09b45a20a4cd2f368c4337581039db06b74e1b)
+
+shellapi.h after windows.h, which it needs; the curl command as a wide
+string without fmt (fmt::format takes no wide format here); cfloat for
+FLT_MAX. The 0.33.0 push failed to build on Windows with these.
+
+#### Version 0.33.0: Zeetures updates itself; Backspace while typing
+
+[`7b42f542`](https://github.com/DotairZee/zeetures/commit/7b42f5420792bb1006f6ed879a479e0f8c1b9477)
+
+- Updates from inside the game (owner, 2026-11-22). Each nightly carries
+  zeetures-update.txt: the version, and each download built that night
+  with its size and SHA-256 (one kept from an earlier night is left out).
+  The game checks it with the system's curl at start and every six hours
+  (Help &gt; Check for Updates Automatically), or when asked (Help &gt; Check for
+  Updates, and a button in About). A newer version is offered in a small
+  window (Update Now, What's New, Not Now); with Help &gt; Install Updates
+  Automatically (off to begin with) it downloads without asking. The
+  download is checked against its SHA-256, kept in the user folder's
+  Updates, and installed as the game ends, after the world is saved:
+  the AppImage takes the old one's place ($APPIMAGE); Windows runs the new
+  installer /SILENT, which waits for the game's ZeeturesRunning mutex and
+  with /RELAUNCH starts it again in the same world; the Mac app is copied
+  out of the disk image by a script that waits for the game to close, or
+  the disk image is opened. Restart Now saves, installs and starts again;
+  When I Quit installs on the way out. The .zip and .tar.gz, and builds
+  of one's own, are told and given the download page. Developer builds
+  check only with OPENC2E_UPDATE_URL (a test server).
+- Backspace while typing to creatures (a player): the system also sent
+  it as a character, "\b", which the hand's bubble drew as a block in the
+  letter's place. Only characters that print reach typed text now.
+
+Tested on Linux against a local server, with real clicks: offered,
+downloaded, checked, swapped, restarted in the same world; automatic
+mode installing on File &gt; Exit; a bad checksum thrown away. The Windows
+and Mac installing is not tried yet (the installer is built on GitHub).
+
+## Version 0.32.1
+
+Favourite places saved; Save World As copies photos and genes; the Syringe brings back the newly dead; the arrow keys and dragging stop following.
+
+### 22 November 2026
+
+#### Version 0.32.1: four fixes found while writing the Help
+
+[`4ecc0052`](https://github.com/DotairZee/zeetures/commit/4ecc005250ec16e46c0a92268a8a7ad45a02d571)
+
+- Favourite places a player adds are saved with the world (only the world
+  file's came back), and one taken off stays off. Older saves keep the
+  world file's.
+- Save World As copies the world's photos, departed creatures' genes and
+  own Additions into the new world, as play goes on there.
+- The Syringe brings back the newly dead, as the game's own mixtures say:
+  for 29 s after a death (C2's death script lifts the body at 30), a mixture
+  rich in Energy (the Metabolism Transplant) fills the body, then one rich
+  in ATP (the Defibrillant) starts it: out cold, failed organs at a
+  quarter, coming round once its ATP holds; the Life Story says it was
+  brought back, its death notice goes, the grave goes. Old age cannot be
+  undone. The Syringe page says what can be done for the dead one shown.
+- The arrow keys and dragging with the middle button stop following a
+  creature, as the wheel did; the arrow keys no longer move the view while
+  a box in a window is typed in.
+
+The Help says so. Developer aid: the director's "die".
+
+## Version 0.32.0
+
+Help in depth: 43 topics with a search and links, one for every kit, opened with F1.
+
+### 22 November 2026
+
+#### Version 0.32.0: Help in depth, with a topic for every kit
+
+[`6f395b70`](https://github.com/DotairZee/zeetures/commit/6f395b7095c42a83af47eece4e35bf0788f5c546)
+
+The Help window is a set of 43 topics now (about 10,000 words, in
+data/help/help-topics.md, built into the program), in place of six short
+sections: getting started, the window, living with creatures (the hand,
+talking, names of your own, thoughts, needs, learning, temperament,
+relationships, growing up, food, sleep, breeding, illness, radiation), the
+world, every kit page by page, add-ons, and where things are kept. The
+topics are listed on the left with a search that marks the words found;
+topics link to one another, with Back; F1 opens it, at the topic of the kit
+in front. Every statement was checked against the code. The Save World
+tooltip said other objects were not saved; they are.
+
+## Version 0.31.0
+
+Names of your own: teach creatures what to call your hand and things, and they use them and teach one another; and following goes with the creature selected.
+
+### 22 November 2026
+
+#### Version 0.31.0: names of your own, and following goes with the selection
+
+[`7b2eab6f`](https://github.com/DotairZee/zeetures/commit/7b2eab6f04bcd9937efa9f223da46d83c14ca829)
+
+A word outside the game's list, said by the hand, is learned as a name: for
+the hand, when it has just touched the creature or shows nothing, or for the
+kind of thing it holds or points at (the smallest there), or that the
+creature looks at beside it. Creatures look at what they know a name for, say
+the names in place of the game's nouns and try them out, and others in
+earshot learn them, family twice as fast. A word comes to mean one thing and
+a thing to have one name. Saved with the creature; Mind Kit, Words, shows
+them with the words it knows and is learning.
+
+While the view follows the selected creature, choosing another by any button,
+kit or key goes on to follow that one.
+
+## Version 0.30.0
+
+Creatures that answer when spoken to: they look at you, try your words, look at what you name, and weigh the verbs they know; and Ctrl+S says your last words again.
+
+### 22 November 2026
+
+#### Version 0.30.0: creatures that answer when spoken to
+
+[`6a7941e0`](https://github.com/DotairZee/zeetures/commit/6a7941e09d427f01a87b54c691ea9ddee59aa6ec)
+
+Spoken to (or tickled or slapped) by the hand, a creature looks round at it,
+and the nearest two try the last word back, in their own tongue until they
+have learned it (babies always). Called by name, only that one. A thing's
+name it knows turns its look to the thing. A verb it knows adds to that
+action's score through the genome's own obedience instincts (hearing a verb:
+do it, rewarded), which had lain dormant: by age (babies have six, children
+thirteen), temper, sociability and need, fading as it ages, and judged by
+praise: a pat soon after doing as it was told keeps it up, unpraised it
+fades, a slap for not listening makes it listen better. Saved minds read
+those instincts again.
+
+Ctrl+S says the last thing typed again, as in C2. OPENC2E_WATCH_OBEY, and
+the director's "say X Y TEXT".
+
+## Version 0.29.2
+
+Smooth walking without pauses or sudden turns, a world opened at every launch if you like, and creatures put down on the volcano's catwalk.
+
+### 22 November 2026
+
+#### Version 0.29.2: smooth walking without pauses, and a world opened at launch
+
+[`1a1f7ddd`](https://github.com/DotairZee/zeetures/commit/1a1f7ddd0e0d542faa50cd7c611009d39b655284)
+
+Walking steps come as evenly as ticks allow and each is drawn until the
+next, instead of a skipped chance now and then (adults stood still 9% of
+their walking time, now 1%); a walk's uneven poses are drawn nearer an even
+speed. Same average pace.
+
+A walk goes the way the creature faces: the norns' gait 13 is written to
+face east, so one told to walk west turned round and walked east (falls in
+matched runs 79 to 26). A creature reaching for something out of its reach
+turns back twice and then stands, instead of to and fro at every step.
+
+The hand can put creatures down on the catwalk in the upper east and the
+walkway by the east dock, whose rooms allowed no drops.
+
+The world chooser's "Always open this world at launch" (and File &gt; Open This
+World at Launch); a start that did not finish shows the chooser.
+
+The README and Help &gt; About say that Zeetures is developed alongside Claude.
+
+## Version 0.29.1
+
+The hidden passage west of the incubator's pond can be walked both ways, and a world whose breed files are missing no longer crashes: its save is kept safe.
+
+### 22 November 2026
+
+#### Version 0.29.1: the hidden passage west of the pond can be walked
+
+[`07727e4b`](https://github.com/DotairZee/zeetures/commit/07727e4bcda06cd607b16cc9b26f984b05f2dfc3)
+
+A stride on a steep slope that rose over 40 px was taken for a wall, and one
+that went down over 20 px for a fall. Where the two rooms' floors make one
+slope (sampled every 4 px, never changing by more than 7) it is now walked:
+west through the passage 28 of 34 norns in two runs (9 of 20 before, the
+rest stuck on its slope), east 30 of 33 (9 of 19). Falls in seven pairs of
+whole-world runs: 131 with, 125 without. The passage's watcher took feet at
+the old floor's height only.
+
+A saved or imported creature whose body cannot be made is no longer left
+half made in the world, where its first step crashed the game, and a world
+some of whose creatures could not be made keeps a copy of its save
+(save.incomplete-DATE) and says so. A crash always ends the program within
+five seconds.
+
+#### Help &gt; About shows 0.29.0
+
+[`4c56e73e`](https://github.com/DotairZee/zeetures/commit/4c56e73ea187c7ec1e6d841991d519dcc10723c7)
+
+## Version 0.29.0
+
+Creatures move smoothly from pose to pose, with pictures made between the game's own by turning each part at its joint; Camera > Smooth Movement turns it off.
+
+### 22 November 2026
+
+#### Version 0.29.0: creatures move smoothly
+
+[`c292a7f3`](https://github.com/DotairZee/zeetures/commit/c292a7f37cb7d02b92ceea2f8c3dd3a23b2680fc)
+
+Between one pose and the next (a walk is four, one every other tick), each
+body part's angle is worked out from its joints, the skeleton is rebuilt from
+them with the standing foot held, and each part is drawn as its nearest
+picture turned about its joint. Turned pictures are made from the player's
+own sprites as needed and kept a while. Drawing only; up to two ticks behind.
+Carried things, bubbles, the halo, Z's and stars, and a camera following a
+creature go with it. Camera &gt; Smooth Movement turns it off.
+
+OPENC2E_WATCH_GLIDE prints jumps from frame to frame; OPENC2E_SNAPSHOTS at
+-3,-3 follows a walking creature.
+
+## Version 0.28.5
+
+Z's over creatures for as long as they sleep, and grendel eggs that hatch without the Boney Grendels pack.
+
+### 22 November 2026
+
+#### Version 0.28.5: Z's over sleepers, and grendel eggs without the Boney pack
+
+[`7dada256`](https://github.com/DotairZee/zeetures/commit/7dada25687d1075c13e4700bdca27ede521b585f)
+
+A sleeping creature shows the game's own drifting Z (the player's zzzz.s16)
+over its head for as long as it sleeps, as C2's stars are shown over an
+unconscious one. NEW: GENE uses the standard grendel for "bone" when the
+Boney Grendels pack is not there, so those eggs no longer stop mid-hatch.
+OPENC2E_SNAPSHOTS at -2,-2 takes a picture at a sleeping creature.
+
+## Version 0.28.4
+
+Spring and summer fruit that feeds: hatchlings no longer starve on a full stomach in a new world.
+
+### 22 November 2026
+
+#### Version 0.28.4: spring and summer fruit that feeds
+
+[`5e88e479`](https://github.com/DotairZee/zeetures/commit/5e88e479498ff6d4e91897e23f67ab89cf3fddab)
+
+Hatchlings starved in new worlds (reported by players, 22 November 2026).
+The seasonal bushes' fruit is most of what they eat, and the spring and
+summer fruits gave only glucose, 60 and 90, where a fruit of the game gives
+about 100 starch, each worth 12 glucose to a norn's body: they ate dozens
+each, stayed at Hunger 255 and died once their stores ran out, about an
+hour old. A new world starts in spring. Both fruits now also give starch
+and a little fat and protein, about 1,500 and 1,800 glucose in all, still
+the lightest of the four seasons.
+
+Twelve norns hatched at the incubator, a fast game week: 7 of 14 creatures
+starved before; none in three runs with this, with 60 to 144 matings and 2
+to 9 conceptions each.
+
+## Version 0.28.3
+
+The first players' reports fixed: display scaling on Windows, speaking after naming a world, creatures that grew up unable to breed, sleep broken off within seconds, a crash at some births, and clearer wording of what a creature is doing.
+
+### 22 November 2026
+
+#### Version 0.28.3: norns breed, sleep and hear again; Windows display scaling
+
+[`31d17d7e`](https://github.com/DotairZee/zeetures/commit/31d17d7e2421c293e5f6d3b66a8f14d56f5b1d1e)
+
+Fixes for what the first players reported on Reddit (22 November 2026).
+
+- With the desktop scaled (Windows and X11 at 125%, 150%, 200%), the
+  interface was laid out for the window's pixels and then drawn larger:
+  windows sat off centre or off the screen and the mouse missed what it
+  pointed at. It is laid out in the drawn size now, and so is the pointer.
+- The first screen always shows the pointer, and its world name box is
+  ready to type in.
+- Closing a text box stopped typing for the whole window, so nobody could
+  speak to the creatures after naming a new world (or anything else) until
+  the world was opened again.
+- Breeding: a receptor that switches on at a life stage reads its chemical
+  at once. One on its own organ's clock was waited for with the clock at 0,
+  so the reproductive organ of every creature that grew up since its world
+  was opened stopped at adolescence and none could breed. Four fast game
+  weeks of twelve hatched norns: no mating at all; with this, 12 to 13
+  matings and 1 to 2 conceptions each.
+- Sleep: a very sleepy body's own falling asleep (event 69) is a sleep, let
+  run; the mind's next choice used to wake it within a second or two, as
+  tired as before (710 of 832 sleeps in a test). It does not start over a
+  sleep, nor while hunger or water keeps the creature awake. Lying down to
+  rest is not learned as sleeping, and lasts until rested. Sleep learned
+  before is learned afresh.
+- A birth no longer crashes the game when a mutated gene names a breed
+  whose pictures are not installed: the creature wears its own species'.
+- What a creature is doing is worded better ("dropping a nature").
+- Developer aids: OPENC2E_WATCH_SLEEP, OPENC2E_WATCH_SEX.
+
+#### README: the trailer by its YouTube picture
+
+[`6d825577`](https://github.com/DotairZee/zeetures/commit/6d82557712d4fe09cb4b5ce435cf0b2af3fd9b96)
+
+The attached video answered only the one who uploaded it (404 signed out).
+Also: downloads are no longer rebuilt every night.
 
 #### The nightly release checked: public, or the job fails
 
