@@ -13,7 +13,9 @@
  *
  *  Log folder: $ZEETURES_MIND_LOG_DIR, else ~/Documents/Creatures/logs/mind.
  *  Logging pace: every $ZEETURES_MIND_LOG_EVERY mind ticks (default 10, about
- *  four seconds), and also on any tick with stimuli or a new decision.
+ *  four seconds), and also on any tick with a notable stimulus, a new
+ *  decision or speech. Shouts and signs heard (STIM SHOU / STIM SIGN, which
+ *  arrive almost every tick) are only counted ("heard"), not listed.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -28,6 +30,7 @@
  */
 
 #include "CreatureMind.h"
+#include "Engine.h"
 
 #include <cctype>
 #include <cstdio>
@@ -65,6 +68,61 @@ std::string jsonString(const std::string& s) {
 	return o + "\"";
 }
 
+// creature kinds as perceptions number them (0-based in practice; checked in
+// play 2026-11-22: 1YRK a Grendel logs 1, 2LRD an Ettin logs 2)
+const char* kindName(int genus) {
+	switch (genus) {
+		case 0: return "norn";
+		case 1: return "grendel";
+		case 2: return "ettin";
+		case 3: return "shee";
+		default: return "";
+	}
+}
+
+// the game's own word for a kind of thing (its word list: nouns from 16)
+std::string thingName(int category) {
+	if (category == MIND_HEALING_FRUIT)
+		return "healing fruit";
+	if (category == MIND_ROTTEN_FRUIT)
+		return "rotten fruit";
+	size_t w = 16 + (size_t)category;
+	std::string s = category >= 0 && w < engine.wordlist.size() ? engine.wordlist[w] : "";
+	while (!s.empty() && (s.back() == ' ' || s.back() == '\r' || s.back() == '\n'))
+		s.pop_back();
+	while (!s.empty() && s.front() == ' ')
+		s.erase(s.begin());
+	for (char& c : s)
+		c = (char)tolower((unsigned char)c);
+	return s.empty() ? "kind " + std::to_string(category) : s;
+}
+
+// action labels (as HomeostatMind's log uses; 10/26 go west, 11/27 east)
+std::string actionLabel(int decision) {
+	switch (decision) {
+		case 0: return "idle";
+		case 1: return "push";
+		case 2: return "pull";
+		case 3: return "stop";
+		case 4: return "approach";
+		case 6: return "pick up";
+		case 7: return "drop";
+		case 8: return "express";
+		case 10: return "travel west";
+		case 11: return "travel east";
+		case 12: return "eat";
+		case 13: return "hit";
+		case 25: return "sleep";
+		case 26: return "walk west";
+		case 27: return "walk east";
+		default: return "action " + std::to_string(decision);
+	}
+}
+
+bool background(const StimulusEvent& s) {
+	return s.command == "STIM SHOU" || s.command == "STIM SIGN";
+}
+
 std::string num(float f) {
 	char buf[32];
 	std::snprintf(buf, sizeof buf, "%.3g", f);
@@ -93,6 +151,7 @@ class LlmMind : public CreatureMind {
 	bool logTried = false;
 	unsigned int every = logEvery();
 	unsigned int sinceLog = 0;
+	unsigned int heard = 0; // shouts and signs since the last line
 
 	void openLog(const MindPerception& p) {
 		if (logTried)
@@ -116,15 +175,15 @@ class LlmMind : public CreatureMind {
 		j << "{\"event\":" << jsonString(event)
 		  << ",\"tick\":" << p.tick
 		  << ",\"self\":" << jsonString(p.self)
-		  << ",\"genus\":" << p.genus
+		  << ",\"kind\":" << jsonString(kindName(p.genus))
 		  << ",\"female\":" << (p.female ? "true" : "false")
-		  << ",\"stage\":" << (int)p.stage
+		  << ",\"stage\":" << jsonString(format_as(p.stage))
 		  << ",\"asleep\":" << (p.asleep ? "true" : "false")
 		  << ",\"room\":" << p.room
 		  << ",\"x\":" << num(p.x) << ",\"y\":" << num(p.y)
 		  << ",\"season\":" << p.season << ",\"timeOfDay\":" << p.timeOfDay
 		  << ",\"inWater\":" << (p.inWater ? "true" : "false")
-		  << ",\"carrying\":" << p.carryingCategory;
+		  << ",\"carrying\":" << (p.carryingCategory >= 0 ? jsonString(thingName(p.carryingCategory)) : "null");
 
 		j << ",\"drives\":{";
 		for (int i = 0; i < 17; i++)
@@ -139,9 +198,9 @@ class LlmMind : public CreatureMind {
 		j << ",\"sees\":[";
 		bool first = true;
 		for (const SeenAgent& s : p.visible) {
-			j << (first ? "" : ",") << "{\"cat\":" << s.category << ",\"dist\":" << num(s.distance);
+			j << (first ? "" : ",") << "{\"what\":" << jsonString(thingName(s.category)) << ",\"cat\":" << s.category << ",\"dist\":" << num(s.distance);
 			if (!s.who.empty())
-				j << ",\"who\":" << jsonString(s.who) << ",\"genus\":" << s.genus
+				j << ",\"who\":" << jsonString(s.who) << ",\"kind\":" << jsonString(kindName(s.genus))
 				  << ",\"affinity\":" << num(s.affinity) << ",\"fear\":" << num(s.fear)
 				  << ",\"familiar\":" << num(s.familiarity) << ",\"kin\":" << (s.kin ? "true" : "false");
 			if (s.edible > 0)
@@ -151,9 +210,12 @@ class LlmMind : public CreatureMind {
 		}
 		j << "]";
 
+		j << ",\"heard\":" << heard;
 		j << ",\"stimuli\":[";
 		first = true;
 		for (const StimulusEvent& s : p.stimuli) {
+			if (background(s))
+				continue;
 			j << (first ? "" : ",") << "{\"cmd\":" << jsonString(s.command);
 			if (s.numbered)
 				j << ",\"id\":" << s.id;
@@ -170,8 +232,13 @@ class LlmMind : public CreatureMind {
 		j << "]";
 
 		if (out) {
-			j << ",\"chose\":{\"attention\":" << out->attentionCategory
-			  << ",\"decision\":" << out->decision
+			j << ",\"chose\":{\"attention\":" << out->attentionCategory;
+			if (out->attentionCategory >= 0)
+				j << ",\"attend\":" << jsonString(thingName(out->attentionCategory));
+			j << ",\"decision\":" << out->decision;
+			if (out->decision >= 0)
+				j << ",\"do\":" << jsonString(actionLabel(out->decision));
+			j
 			  << ",\"sleep\":" << out->sleep;
 			if (!out->say.empty())
 				j << ",\"say\":" << jsonString(out->say);
@@ -193,15 +260,23 @@ class LlmMind : public CreatureMind {
 
 	void born(const MindPerception& p) override {
 		inner->born(p);
-		write("born", p, nullptr);
+		write("start", p, nullptr); // a hatching, or a saved world loading
 	}
 
 	MindOutput tick(const MindPerception& p) override {
 		MindOutput out = inner->tick(p);
 		sinceLog++;
-		if (sinceLog >= every || !p.stimuli.empty() || out.decision >= 0 || !out.say.empty()) {
+		bool notable = false;
+		for (const StimulusEvent& s : p.stimuli) {
+			if (background(s))
+				heard++;
+			else
+				notable = true;
+		}
+		if (sinceLog >= every || notable || out.decision >= 0 || !out.say.empty() || !out.thought.empty()) {
 			write("tick", p, &out);
 			sinceLog = 0;
+			heard = 0;
 		}
 		return out;
 	}
